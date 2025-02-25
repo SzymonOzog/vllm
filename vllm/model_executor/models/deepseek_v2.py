@@ -617,6 +617,7 @@ class DeepseekV2Model(nn.Module):
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
+        torch.cuda.memory._record_memory_history(max_entries=100000)
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
@@ -640,6 +641,7 @@ class DeepseekV2Model(nn.Module):
                 "residual": residual
             })
 
+        torch.cuda.memory._dump_snapshot("profiler"+str(input_ids.device)) 
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 

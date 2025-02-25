@@ -4,12 +4,13 @@ from typing import Any, Callable, Dict, List, Optional
 
 import gguf
 import torch
+import triton.language as tl
 from gguf import GGMLQuantizationType as WeightType
 from torch.nn.parameter import Parameter, UninitializedParameter
 
 from vllm import _custom_ops as ops
 from vllm.model_executor.layers.activation import SiluAndMul
-from vllm.model_executor.layers.fused_moe.fused_moe import moe_align_block_size
+from vllm.model_executor.layers.fused_moe.fused_moe import moe_align_block_size, invoke_fused_moe_kernel, try_get_optimal_moe_config
 from vllm.model_executor.layers.fused_moe.layer import (FusedMoE,
                                                         FusedMoEMethodBase)
 from vllm.model_executor.layers.linear import LinearBase, LinearMethodBase
@@ -119,6 +120,53 @@ def _fuse_mul_mat(x: torch.Tensor, qweight: torch.Tensor,
             f"Unsupported GGUF quantization type: {qweight_type}")
     return y
 
+def _invoke_moe(
+        x: torch.Tensor,
+        w: torch.Tensor,
+        sorted_token_ids: torch.Tensor,
+        expert_ids: torch.Tensor,
+        num_tokens_post_padded: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        qweight_type: int,
+        top_k: int,
+        num_tokens: int,
+        E: int,
+        N: int,
+        H: int,
+        is_down_proj: bool,
+        config: Optional[Dict[str, Any]] = None
+        ):
+    if qweight_type in UNQUANTIZED_TYPES:
+        out = torch.empty(num_tokens, top_k, w.shape[1], device=x.device, dtype=torch.float16)
+        invoke_fused_moe_kernel(x, w, out, None, None, None,
+                                topk_weights, topk_ids, sorted_token_ids,
+                                expert_ids, num_tokens_post_padded, is_down_proj,
+                                top_k, config, torch.float16, False, False, False)
+    # Use MMQ Kernel if it's available (standard + k-quants)
+    elif qweight_type in MMQ_QUANT_TYPES:
+        row = top_k * num_tokens if is_down_proj else num_tokens
+        token_offset = 1 if is_down_proj else top_k
+        out = ops.ggml_moe_a8(x, w, sorted_token_ids, expert_ids, qweight_type, H if is_down_proj else N,
+                              token_offset, row)
+        if is_down_proj:
+            out = out.reshape(num_tokens, top_k, H).mul_(
+                topk_weights.view(num_tokens, top_k, 1))
+    elif qweight_type in DEQUANT_TYPES:
+        block_size, type_size = gguf.GGML_QUANT_SIZES[qweight_type]
+        shape = (w.shape[0] * w.shape[1], w.shape[2] // type_size * block_size)
+        weight = ops.ggml_dequantize(w, qweight_type, *shape)
+        weight = weight.reshape(w.shape[0], w.shape[1], weight.shape[1])
+        out = torch.empty(num_tokens, top_k, w.shape[1], device=x.device, dtype=torch.float16)
+        invoke_fused_moe_kernel(x, weight, out, None, None, None,
+                                topk_weights, topk_ids, sorted_token_ids,
+                                expert_ids, num_tokens_post_padded, is_down_proj,
+                                top_k, config, tl.float16, False, False, False)
+    else:
+        qweight_type = WeightType(qweight_type)
+        raise NotImplementedError(
+            f"Unsupported GGUF quantization type: {qweight_type}")
+    return out
 
 def _fused_moe_gguf(
     x: torch.Tensor,
@@ -130,6 +178,7 @@ def _fused_moe_gguf(
     qweight_type2: int,
     act,
 ) -> torch.Tensor:
+<<<<<<< Updated upstream
     out_hidden_states = torch.empty_like(x)
     if qweight_type2 in MMQ_QUANT_TYPES and qweight_type in MMQ_QUANT_TYPES:
         num_tokens, _ = x.shape
@@ -167,6 +216,50 @@ def _fused_moe_gguf(
                 else:
                     current_hidden_state.add_(current_state)
             out_hidden_states[tok] = current_hidden_state
+=======
+
+    num_tokens, _ = x.shape
+    E, N, _ = w1.shape
+    _, H, _ = w2.shape
+    top_k = topk_ids.shape[1]
+
+    if qweight_type not in MMQ_QUANT_TYPES:
+        config = try_get_optimal_moe_config((E, N, H*2), (E, H, N), top_k, None, num_tokens)
+        BLOCK_SIZE = config['BLOCK_SIZE_M']
+    else:
+        config = None
+        BLOCK_SIZE = 4#ops.ggml_moe_get_block_size(qweight_type)
+
+    sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
+        topk_ids, BLOCK_SIZE, E)
+    out = _invoke_moe(x, w1, sorted_token_ids, expert_ids,
+                      num_tokens_post_padded, topk_weights,
+                      topk_ids, qweight_type, top_k, num_tokens,
+                      E, N, H, False, config)
+
+    if qweight_type2 not in MMQ_QUANT_TYPES:
+        config = try_get_optimal_moe_config((E, N, H*2), (E, H, N), top_k, None, num_tokens)
+        BLOCK_SIZE2 = config['BLOCK_SIZE_M']
+    else:
+        config = None
+        BLOCK_SIZE2 = 4#ops.ggml_moe_get_block_size(qweight_type)
+
+    if BLOCK_SIZE2 != BLOCK_SIZE:
+        sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
+            topk_ids, BLOCK_SIZE2, E)
+
+    out = act(out)
+    out = _invoke_moe(out, w2, sorted_token_ids, expert_ids,
+                      num_tokens_post_padded, topk_weights,
+                      topk_ids, qweight_type2, top_k, num_tokens,
+                      E, N, H, True, config)
+    # out = ops.ggml_moe_a8(out, w2, sorted_token_ids, expert_ids, qweight_type2,
+    #                       w2.shape[1], 1, num_tokens * top_k)
+    # out = out.reshape(num_tokens, top_k, w2.shape[1]).mul_(
+    #     topk_weights.view(num_tokens, top_k, 1))
+    out_hidden_states = torch.empty_like(x)
+    ops.moe_sum(out, out_hidden_states)
+>>>>>>> Stashed changes
     return out_hidden_states
 
 
