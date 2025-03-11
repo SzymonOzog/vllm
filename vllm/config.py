@@ -1758,9 +1758,17 @@ class SpeculativeConfig:
 
         if speculative_model is None:
             if num_speculative_tokens is not None:
-                raise ValueError("num_speculative_tokens was provided without "
-                                 "speculative_model.")
-            return None
+                if target_model_config.hf_text_config.model_type \
+                        == "deepseek_v3":
+                    # use the draft model from the same model:
+                    speculative_model = target_model_config.model
+                    speculative_model_quantization = target_model_config.quantization
+                else:
+                    raise ValueError(
+                        "num_speculative_tokens was provided without "
+                        "speculative_model.")
+            else:
+                return None
 
         if (speculative_disable_by_batch_size is not None
                 and speculative_disable_by_batch_size < 2):
