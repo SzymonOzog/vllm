@@ -1308,6 +1308,7 @@ class EngineArgs:
             typical_acceptance_sampler_posterior_alpha=self.
             typical_acceptance_sampler_posterior_alpha,
             disable_logprobs=self.disable_logprobs_during_spec_decoding,
+            hf_config_path=self.hf_config_path,
         )
 
         # Reminder: Please update docs/source/features/compatibility_matrix.md
