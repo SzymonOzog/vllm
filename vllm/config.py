@@ -1908,6 +1908,8 @@ class SpeculativeConfig:
                         == "deepseek_v3":
                     # use the draft model from the same model:
                     speculative_model = target_model_config.model
+                    speculative_model_quantization = \
+                            target_model_config.quantization
                 else:
                     raise ValueError(
                         "num_speculative_tokens was provided without "

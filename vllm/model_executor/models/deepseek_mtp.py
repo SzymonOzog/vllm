@@ -53,6 +53,7 @@ class DeepSeekMultiTokenPredictorLayer(nn.Module):
         self.embed_tokens = VocabParallelEmbedding(
             config.vocab_size,
             config.hidden_size,
+            quant_config=quant_config,
         )
 
         self.enorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
