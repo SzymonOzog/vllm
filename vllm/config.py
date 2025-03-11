@@ -1693,6 +1693,7 @@ class SpeculativeConfig:
         typical_acceptance_sampler_posterior_threshold: Optional[float],
         typical_acceptance_sampler_posterior_alpha: Optional[float],
         disable_logprobs: Optional[bool],
+        hf_config_path: Optional[str] = None,
     ) -> Optional["SpeculativeConfig"]:
         """Create a SpeculativeConfig if possible, else return None.
 
@@ -1762,7 +1763,8 @@ class SpeculativeConfig:
                         == "deepseek_v3":
                     # use the draft model from the same model:
                     speculative_model = target_model_config.model
-                    speculative_model_quantization = target_model_config.quantization
+                    speculative_model_quantization = \
+                            target_model_config.quantization
                 else:
                     raise ValueError(
                         "num_speculative_tokens was provided without "
@@ -1804,6 +1806,7 @@ class SpeculativeConfig:
             ngram_prompt_lookup_min = 0
             draft_model_config = ModelConfig(
                 model=speculative_model,
+                hf_config_path=hf_config_path,
                 task="draft",
                 tokenizer=target_model_config.tokenizer,
                 tokenizer_mode=target_model_config.tokenizer_mode,
