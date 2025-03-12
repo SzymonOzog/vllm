@@ -1,4 +1,5 @@
 #include <cuda_fp16.h>
+#include <cuda_bf16.h>
 #include <cuda_runtime.h>
 
 #include <torch/all.h>
@@ -70,14 +71,19 @@ static void quantize_row_q8_1_cuda(const scalar_t* x, void* vy, const int kx,
 }
 
 torch::Tensor ggml_dequantize(torch::Tensor W,  // quant weight
-                              int64_t type, int64_t m, int64_t n) {
+                              int64_t type, int64_t m, int64_t n,
+                              at::ScalarType dtype = at::ScalarType::Half) {
   const at::cuda::OptionalCUDAGuard device_guard(device_of(W));
   auto options =
-      torch::TensorOptions().dtype(torch::kFloat16).device(W.device());
+      torch::TensorOptions().dtype(dtype).device(W.device());
   at::Tensor DW = torch::empty({m, n}, options);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
-  const to_fp16_cuda_t to_fp16_cuda = ggml_get_to_fp16_cuda(type);
-  to_fp16_cuda((void*)W.data_ptr(), (half*)DW.data_ptr(), m * n, stream);
+
+  VLLM_DISPATCH_FLOATING_TYPES(DW.scalar_type(), "ggml_deq", [&] {
+    auto to_cuda = ggml_get_to_cuda<scalar_t>(type);
+    to_cuda((void*)W.data_ptr(), (scalar_t*)DW.data_ptr(), m * n, stream);
+  });
+
   return DW;
 }
 
