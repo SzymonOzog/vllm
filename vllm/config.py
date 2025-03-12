@@ -1909,8 +1909,9 @@ class SpeculativeConfig:
                         == "deepseek_v3":
                     # use the draft model from the same model:
                     speculative_model = target_model_config.model
-                    speculative_model_quantization = \
-                            target_model_config.quantization
+                    speculative_model = "/nfs/scratch_2/szymon_ozog/DeepSeekR1_full"
+                    # speculative_model_quantization = "fp8"
+                    # target_model_config.quantization
                 else:
                     raise ValueError(
                         "num_speculative_tokens was provided without "
@@ -1952,7 +1953,7 @@ class SpeculativeConfig:
             ngram_prompt_lookup_min = 0
             draft_model_config = ModelConfig(
                 model=speculative_model,
-                hf_config_path=hf_config_path,
+                # hf_config_path=hf_config_path,
                 task="draft",
                 tokenizer=target_model_config.tokenizer,
                 tokenizer_mode=target_model_config.tokenizer_mode,

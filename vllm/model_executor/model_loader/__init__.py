@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-
 from torch import nn
 
-from vllm.config import VllmConfig
+from vllm.config import LoadFormat, VllmConfig
 from vllm.model_executor.model_loader.loader import (BaseModelLoader,
                                                      get_model_loader)
 from vllm.model_executor.model_loader.utils import (
@@ -10,7 +9,12 @@ from vllm.model_executor.model_loader.utils import (
 
 
 def get_model(*, vllm_config: VllmConfig) -> nn.Module:
-    loader = get_model_loader(vllm_config.load_config)
+    if "gguf" not in vllm_config.model_config.model:
+        load_config = vllm_config.load_config
+        load_config.load_format = LoadFormat("safetensors")
+        loader = get_model_loader(load_config)
+    else:
+        loader = get_model_loader(vllm_config.load_config)
     return loader.load_model(vllm_config=vllm_config)
 
 
