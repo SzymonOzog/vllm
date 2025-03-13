@@ -1290,6 +1290,46 @@ class GGUFModelLoader(BaseModelLoader):
                         f"model.layers.{idx}.mlp.experts.0.gate_proj.weight"
                 gguf_to_hf_name_map[f"blk.{idx}.ffn_up_exps.weight"] = \
                         f"model.layers.{idx}.mlp.experts.0.up_proj.weight"
+            key = "model.layers.61.mlp.experts.0.up_proj.weight"
+            gguf_to_hf_name_map['blk.61.ffn_up_exps.weight'] = key
+
+            key = "model.layers.61.mlp.experts.0.down_proj.weight"
+            gguf_to_hf_name_map['blk.61.ffn_down_exps.weight'] = key
+
+            key = "model.layers.61.mlp.experts.0.gate_proj.weight"
+            gguf_to_hf_name_map['blk.61.ffn_gate_exps.weight'] = key
+
+            key = "model.layers.61.mlp.shared_experts.down_proj.weight"
+            gguf_to_hf_name_map['blk.61.ffn_down_shexps.weight'] = key
+
+            key = "model.layers.61.mlp.shared_experts.up_proj.weight"
+            gguf_to_hf_name_map['blk.61.ffn_up_shexps.weight'] = key
+
+            key = "model.layers.61.mlp.shared_experts.gate_proj.weight"
+            gguf_to_hf_name_map['blk.61.ffn_gate_shexps.weight'] = key
+
+            gguf_to_hf_name_map['blk.61.ffn_gate_inp.weight'] = 'model.layers.61.mlp.gate.weight'
+            gguf_to_hf_name_map['blk.61.exp_probs_b.bias'] = 'model.layers.61.mlp.gate.e_score_correction_bias'
+
+            gguf_to_hf_name_map['blk.61.attn_kv_a_mqa.weight'] = 'model.layers.61.self_attn.kv_a_proj_with_mqa.weight'
+            gguf_to_hf_name_map['blk.61.attn_kv_b.weight'] = 'model.layers.61.self_attn.kv_b_proj.weight'
+
+            gguf_to_hf_name_map['blk.61.attn_q_a.weight'] = 'model.layers.61.self_attn.q_a_proj.weight'
+            gguf_to_hf_name_map['blk.61.attn_q_b.weight'] = 'model.layers.61.self_attn.q_b_proj.weight'
+
+            gguf_to_hf_name_map['blk.61.attn_output.weight'] = 'model.layers.61.self_attn.o_proj.weight'
+
+            gguf_to_hf_name_map['blk.61.attn_kv_a_norm.weight'] = 'model.layers.61.self_attn.kv_a_layernorm.weight'
+            gguf_to_hf_name_map['blk.61.attn_q_a_norm.weight'] = 'model.layers.61.self_attn.q_a_layernorm.weight'
+            
+            gguf_to_hf_name_map['blk.61.attn_norm.weight'] = 'model.layers.61.input_layernorm.weight'
+            gguf_to_hf_name_map['blk.61.ffn_norm.weight'] = 'model.layers.61.post_attention_layernorm.weight'
+            
+            gguf_to_hf_name_map['blk.61.shared_head.norm.weight'] = 'model.layers.61.shared_head.norm.weight'
+            gguf_to_hf_name_map['blk.61.shared_head.head.weight'] = 'model.layers.61.shared_head.head.weight'
+            gguf_to_hf_name_map['blk.61.eh_proj.weight'] = 'model.layers.61.eh_proj.weight'
+            gguf_to_hf_name_map['blk.61.enorm.weight'] = 'model.layers.61.enorm.weight'
+            gguf_to_hf_name_map['blk.61.hnorm.weight'] = 'model.layers.61.hnorm.weight'
 
         arch = None
         for key, value in gguf.MODEL_ARCH_NAMES.items():

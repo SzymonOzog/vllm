@@ -495,7 +495,11 @@ def gguf_quant_weights_iterator(
             if weight_type.name != "F32":
                 weight_type_name = name.replace("weight", "qweight_type")
                 weight_type = torch.tensor(weight_type)
+                if("embed_tokens" in name):
+                    yield "model.layers.61.embed_tokens.qweight_type", weight_type
                 yield weight_type_name, weight_type
+        else:
+            print("no mapping found for", tensor.name)
 
     for tensor in reader.tensors:
         if tensor.name in gguf_to_hf_name_map:
@@ -505,7 +509,11 @@ def gguf_quant_weights_iterator(
             if weight_type.name != "F32":
                 name = name.replace("weight", "qweight")
             param = torch.tensor(weight)
+            if("embed_tokens" in name):
+                yield "model.layers.61.embed_tokens.qweight", param
             yield name, param
+        else:
+            print("no mapping found for", tensor.name)
 
 
 def convert_pyslice_to_tensor(x: Any) -> torch.Tensor:
