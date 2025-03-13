@@ -32,7 +32,7 @@ my_extension = load(
     verbose=True,
 )
 
-dtype = torch.bfloat16
+dtype = torch.float32
 shape_str = weight.name.split("_")[-1]
 shape = map(int, shape_str.split("x"))
 

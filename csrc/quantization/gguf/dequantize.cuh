@@ -190,8 +190,6 @@ static __global__ void dequantize_block_q4_K(const void * __restrict__ vx, dst_t
     const half d2 = __hmul(dall, __int2half_rn(sc));
     const half m2 = __hmul(dmin, __int2half_rn(m));
     for (int l = 0; l < n; ++l) {
-        //y[l + 0] = __hsub(__hmul(d1, __int2half_rn(q[l] & 0xF)), m1);
-        //y[l +32] = __hsub(__hmul(d2,  __int2half_rn(q[l] >> 4)), m2);
         y[l + 0] = convert_from_half<dst_t>(__hsub(__hmul(d1, __int2half_rn(q[l] & 0xF)), m1));
         y[l +32] = convert_from_half<dst_t>(__hsub(__hmul(d2,  __int2half_rn(q[l] >> 4)), m2));
     }

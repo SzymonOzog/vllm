@@ -272,7 +272,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
 #endif
 
   // Dequantization for GGML.
-  ops.def("ggml_dequantize(Tensor W, int type, SymInt m, SymInt n) -> Tensor");
+  ops.def("ggml_dequantize(Tensor W, int type, SymInt m, SymInt n, ScalarType? dtype) -> Tensor");
   ops.impl("ggml_dequantize", torch::kCUDA, &ggml_dequantize);
 
   // mmvq kernel for GGML.
@@ -294,8 +294,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "int type, SymInt row, SymInt top_k, SymInt tokens) -> Tensor");
   ops.impl("ggml_moe_a8", torch::kCUDA, &ggml_moe_a8);
 
-  ops.def("ggml_moe_get_block_size(int type) -> int");
-  ops.impl("ggml_moe_get_block_size", &ggml_moe_get_block_size);
+  ops.def("ggml_moe_get_block_size", &ggml_moe_get_block_size);
 
 #ifndef USE_ROCM
   // fp8_marlin Optimized Quantized GEMM for FP8 weight-only.

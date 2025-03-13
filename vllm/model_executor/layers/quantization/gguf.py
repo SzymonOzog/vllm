@@ -95,13 +95,6 @@ MMQ_QUANT_TYPES = STANDARD_QUANT_TYPES | KQUANT_TYPES
 
 def _fuse_mul_mat(x: torch.Tensor, qweight: torch.Tensor,
                   qweight_type: int) -> torch.Tensor:
-    # HACK: when doing chunked prefill we don't generate output tokens
-    # so input to logits generator is empty which causes invalid parameter
-    if x.shape[0] == 0:
-        return torch.empty(x.shape[0],
-                           qweight.shape[0],
-                           dtype=x.dtype,
-                           device=x.device)
     # there is no need to call any kernel for fp16/bf16
     if qweight_type in UNQUANTIZED_TYPES:
         return x @ qweight.T
@@ -115,7 +108,7 @@ def _fuse_mul_mat(x: torch.Tensor, qweight: torch.Tensor,
     elif qweight_type in DEQUANT_TYPES:
         block_size, type_size = gguf.GGML_QUANT_SIZES[qweight_type]
         shape = (qweight.shape[0], qweight.shape[1] // type_size * block_size)
-        weight = ops.ggml_dequantize(qweight, qweight_type, *shape)
+        weight = ops.ggml_dequantize(qweight, qweight_type, *shape, x.dtype)
         y = x @ weight.T
     else:
         # Raise an error if the quantization type is not supported.
@@ -193,6 +186,7 @@ class GGUFLinearMethod(LinearMethodBase):
                        output_partition_sizes: List[int], input_size: int,
                        output_size: int, params_dtype: torch.dtype,
                        **extra_weight_attrs):
+        self.params_dtype = params_dtype
         output_size_per_partition = sum(output_partition_sizes)
 
         tensor_shape = (output_size_per_partition, input_size_per_partition)
@@ -365,7 +359,7 @@ class GGUFEmbeddingMethod(GGUFLinearMethod):
         x_flat = x.flatten()
         quant = torch.index_select(qweight, dim=0, index=x_flat)
         dequant = ops.ggml_dequantize(quant, qweight_type, hidden_size,
-                                      x_flat.shape[0]).to(torch.bfloat16)
+                                      x_flat.shape[0], self.params_dtype)
         return dequant.view(*x.shape, hidden_size)
 
 

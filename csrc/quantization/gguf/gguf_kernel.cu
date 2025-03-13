@@ -1,5 +1,4 @@
 #include <cuda_fp16.h>
-#include <cuda_bf16.h>
 #include <cuda_runtime.h>
 
 #include <torch/all.h>
@@ -72,10 +71,12 @@ static void quantize_row_q8_1_cuda(const scalar_t* x, void* vy, const int kx,
 
 torch::Tensor ggml_dequantize(torch::Tensor W,  // quant weight
                               int64_t type, int64_t m, int64_t n,
-                              at::ScalarType dtype = at::ScalarType::Half) {
+                              std::optional<at::ScalarType> const& dtype) {
+                              //at::ScalarType dtype = at::ScalarType::Half) {
   const at::cuda::OptionalCUDAGuard device_guard(device_of(W));
+  auto dtype_ = dtype.value_or(torch::kFloat16);
   auto options =
-      torch::TensorOptions().dtype(dtype).device(W.device());
+      torch::TensorOptions().dtype(dtype_).device(W.device());
   at::Tensor DW = torch::empty({m, n}, options);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
 
