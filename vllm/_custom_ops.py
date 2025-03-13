@@ -409,7 +409,7 @@ if hasattr(torch.ops._C, "ggml_dequantize"):
     @register_fake("_C::ggml_dequantize")
     def _ggml_dequantize_fake(W: torch.Tensor, quant_type: int,
                               m: torch.SymInt,
-                              n: torch.SymInt) -> torch.Tensor:
+                              n: torch.SymInt, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
         return torch.empty((m, n), dtype=torch.float16, device=W.device)
 
     @register_fake("_C::ggml_mul_mat_vec_a8")
@@ -893,8 +893,8 @@ def marlin_qqq_gemm(a: torch.Tensor, b_q_weight: torch.Tensor,
 
 # gguf
 def ggml_dequantize(W: torch.Tensor, quant_type: int, m: int,
-                    n: int) -> torch.Tensor:
-    return torch.ops._C.ggml_dequantize(W, quant_type, m, n)
+                    n: int, dtype: Optional[torch.dtype]) -> torch.Tensor:
+    return torch.ops._C.ggml_dequantize(W, quant_type, m, n, dtype)
 
 
 def ggml_mul_mat_vec_a8(
