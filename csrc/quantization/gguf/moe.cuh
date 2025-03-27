@@ -1,4 +1,7 @@
 #include <cstdint>
+#include "mma.cuh"
+
+#define FAST_MMA 1
 
 /* Adapted from ./csrc/quantization/gguf/mmq.cuh
    based on ./vllm/model_executor/layers/fused_moe/fused_moe.py */
@@ -16,6 +19,7 @@ static __device__ __forceinline__ void moe_q(
   const int blocks_per_row_x = ncols_x / qk;
   const int blocks_per_col_y = nrows_y / QK8_1;
   const int blocks_per_warp = WARP_SIZE_GGUF / qi;
+  const int lane_id = threadIdx.x%32;
 
   const int ncols_dst = ncols_y * top_k;
 
@@ -46,7 +50,11 @@ static __device__ __forceinline__ void moe_q(
   __shared__ int tile_y_qs[mmq_x * WARP_SIZE_GGUF];
   __shared__ half2 tile_y_ds[mmq_x * WARP_SIZE_GGUF / QI8_1];
 
+#if FAST_MMA
+  float sum[4] = {0.0f};
+#else
   float sum[mmq_y / WARP_SIZE_GGUF][mmq_x / nwarps] = {{0.0f}};
+#endif // FAST_MMA
 
   for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
     load_tiles(x + row_x_0 * blocks_per_row_x + ib0, tile_x_ql, tile_x_dm,
@@ -93,6 +101,49 @@ static __device__ __forceinline__ void moe_q(
       }
       __syncthreads();
 
+#if FAST_MMA
+      tile<16, 4, int> A;
+      tile<8, 8, int> B;
+      tile<16, 8, int> acc;
+
+      for (int k = ir * WARP_SIZE_GGUF / qr; k < (ir + 1) * WARP_SIZE_GGUF / qr;
+           k += 4) 
+      {
+          int row =  threadIdx.y * 16 + lane_id>>2;
+          int col = lane_id%4 + k;
+          half2 dsx[2];
+
+          A.x[0] = tile_x_ql[row*(WARP_SIZE_GGUF+1) + col];
+          dsx[0] = tile_x_dm[row*(WARP_SIZE_GGUF+1)/QI4_1];
+
+          row+=8;
+          A.x[1] = tile_x_ql[row*(WARP_SIZE_GGUF+1) + col];
+          dsx[1] = tile_x_dm[row*(WARP_SIZE_GGUF+1)/QI4_1];
+
+          row = lane_id>>2;
+          col = lane_id%4 + k*2;
+          B.x[0] = tile_y_qs[row*WARP_SIZE_GGUF + col];
+          col+=4;
+          B.x[1] = tile_y_qs[row*WARP_SIZE_GGUF + col];
+
+          half2 dsy[2];
+          dsy[0] = tile_y_ds[(lane_id%4)*(WARP_SIZE_GGUF/QI8_1)];
+          dsy[0] = tile_y_ds[(lane_id%4 + 1)*(WARP_SIZE_GGUF/QI8_1)];
+
+          // asm("mma.sync.aligned.m16n8k32.row.col.s32.s4.s8.s32 {%0, %1, %2, %3}, {%4, %5}, {%6, %7}, {%0, %1, %2, %3};"
+          //         : "+r"(acc.x[0]), "+r"(acc.x[1]), "+r"(acc.x[2]), "+r"(acc.x[3])
+          //         : "r"(A.x[0]), "r"(A.x[1])
+          //         : "r"(B.x[0]), "r"(B.x[1]));
+
+          for (int i = 0; i<4; i++)
+          {
+              sum[i] += (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[i/2].x;
+              sum[i] += (float)dsy[i%2].y * (float)dsx[i/2].y;
+          }
+      }
+
+
+#else
       // #pragma unroll // unrolling this loop causes too much register pressure
       for (int k = ir * WARP_SIZE_GGUF / qr; k < (ir + 1) * WARP_SIZE_GGUF / qr;
            k += vdr) {
@@ -106,10 +157,24 @@ static __device__ __forceinline__ void moe_q(
           }
         }
       }
+#endif // FAST_MMA
       __syncthreads();
     }
   }
 
+#if FAST_MMA
+    const int2 col_dst = reinterpret_cast<int2*>(sorted_token_ids[col_dst_0])[lane_id%4];
+    if (col_dst.x < ncols_dst)
+    {
+        dst[col_dst.x*nrows_dst + lane_id>>2] = sum[0];
+        dst[col_dst.x*nrows_dst + lane_id>>2 + 8] = sum[2];
+    }
+    if (col_dst.y < ncols_dst)
+    {
+        dst[col_dst.y*nrows_dst + lane_id>>2] = sum[1];
+        dst[col_dst.y*nrows_dst + lane_id>>2 + 8] = sum[3];
+    }
+#else
 #pragma unroll
   for (int j = 0; j < mmq_x; j += nwarps) {
     const int col_dst = token_offs[j / nwarps];
@@ -126,6 +191,7 @@ static __device__ __forceinline__ void moe_q(
       dst[col_dst * nrows_dst + row_dst] = sum[i / WARP_SIZE_GGUF][j / nwarps];
     }
   }
+#endif // FAST_MMA
 }
 
 #if defined(USE_ROCM)
