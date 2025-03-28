@@ -1202,6 +1202,15 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
 }
 
 template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
+#if FAST_MMA
+    __shared__ int   tile_x_ql[(mmq_y * (2 * WARP_SIZE_GGUF)  + mmq_y)];
+    __shared__ half2 tile_x_dm[mmq_y * (8) + mmq_y];
+    // __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE_GGUF/8)     + mmq_y/8];
+
+    *x_ql = tile_x_ql;
+    *x_dm = tile_x_dm;
+    // *x_sc = tile_x_sc;
+#else
     __shared__ int   tile_x_ql[mmq_y * (WARP_SIZE_GGUF)       + mmq_y];
     __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE_GGUF/QI4_K) + mmq_y/QI4_K];
     __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE_GGUF/8)     + mmq_y/8];
@@ -1209,6 +1218,7 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_K(
     *x_ql = tile_x_ql;
     *x_dm = tile_x_dm;
     *x_sc = tile_x_sc;
+#endif // FAST_MMA
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_K(
@@ -1227,12 +1237,50 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
         const block_q4_K * bxi = bx0 + i*blocks_per_row + kbx;
+#if FAST_MMA
+        int packed = get_int_from_uint8_aligned(bxi->qs, kqsx);
+        x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8] = (packed) & 0x0F0F0F0F;
+        x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8 + 8] = (packed >> 4) & 0x0F0F0F0F;
+#else
         x_ql[i * (WARP_SIZE_GGUF + 1) + k] = get_int_from_uint8_aligned(bxi->qs, kqsx);
+#endif // FAST_MMA
+
     }
 
     const int blocks_per_tile_x_row = WARP_SIZE_GGUF / QI4_K; // == 1 if QK_K == 256
     const int kbxd = k % blocks_per_tile_x_row;          // == 0 if QK_K == 256
 
+#if FAST_MMA
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * 16) {
+        int i = (i0 + i_offset * 16 + k / 2) % mmq_y;
+        if (need_check) {
+            i = min(i, i_max);
+        }
+        const block_q4_K * bxi = bx0 + i*blocks_per_row + kbxd;
+        half2 b_dm = bxi->dm * make_half2(1.0f, -1.0f);
+
+        const int * scales = (const int *) bxi->scales;
+
+        int ksc = k%2;
+
+        int sc32 = (scales[(ksc%2) + (ksc!=0)] >> (4 * (ksc & (ksc/2)))) & 0x0F0F0F0F; // lower 4 bits
+        sc32    |= (scales[ksc/2]              >> (2 * (ksc % 2)))       & 0x30303030; // upper 2 bits
+
+        int ksc2 = ksc+2;
+
+        int m32 = (scales[(ksc2%2) + (ksc2!=0)] >> (4 * (ksc2 & (ksc2/2)))) & 0x0F0F0F0F; // lower 4 bits
+        m32    |= (scales[ksc2/2]              >> (2 * (ksc2 % 2)))       & 0x30303030; // upper 2 bits
+        
+        const uint8_t * sc8 = (const uint8_t*) &sc32;
+        const uint8_t * m8 = (const uint8_t*) &m32;
+#pragma unroll
+        for (int l = 0; l < sizeof(int); ++l)
+        {
+            x_dm[i*(9) + sizeof(int)*ksc + i] = b_dm * make_half2(sc8[l], m8[l]);
+        }
+    }
+
+#else
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI4_K) {
         int i = (i0 + i_offset * QI4_K + k / blocks_per_tile_x_row) % mmq_y;
@@ -1262,6 +1310,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
         x_sc[i * (WARP_SIZE_GGUF/8) + i / 8 + ksc] = scales8;
     }
+#endif //FAST_MMA
 }
 
 static __device__ __forceinline__ float vec_dot_q4_K_q8_1_mul_mat(

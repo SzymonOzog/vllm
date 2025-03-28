@@ -102,7 +102,7 @@ static __device__ __forceinline__ void moe_q(
       __syncthreads();
 
 #if FAST_MMA
-      tile<16, 4, int> A;
+      tile<16, 8, int> A;
       tile<8, 8, int> B;
       tile<16, 8, int> acc;
 
@@ -113,12 +113,18 @@ static __device__ __forceinline__ void moe_q(
           int col = lane_id%4 + k;
           half2 dsx[2];
 
-          A.x[0] = tile_x_ql[row*(WARP_SIZE_GGUF+1) + col];
-          dsx[0] = tile_x_dm[row*(WARP_SIZE_GGUF+1)/QI4_1];
+          dsx[0] = tile_x_dm[row*(9) + k/4];
 
+          A.x[0] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
           row+=8;
-          A.x[1] = tile_x_ql[row*(WARP_SIZE_GGUF+1) + col];
-          dsx[1] = tile_x_dm[row*(WARP_SIZE_GGUF+1)/QI4_1];
+          A.x[1] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+          row-=8;
+          col+=4;
+          A.x[2] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+          row+=8;
+          A.x[3] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+
+          dsx[1] = tile_x_dm[row*(9) + k/4];
 
           row = lane_id>>2;
           col = lane_id%4 + k*2;
@@ -128,12 +134,15 @@ static __device__ __forceinline__ void moe_q(
 
           half2 dsy[2];
           dsy[0] = tile_y_ds[(lane_id%4)*(WARP_SIZE_GGUF/QI8_1)];
-          dsy[0] = tile_y_ds[(lane_id%4 + 1)*(WARP_SIZE_GGUF/QI8_1)];
+          dsy[1] = tile_y_ds[(lane_id%4 + 1)*(WARP_SIZE_GGUF/QI8_1)];
 
-          // asm("mma.sync.aligned.m16n8k32.row.col.s32.s4.s8.s32 {%0, %1, %2, %3}, {%4, %5}, {%6, %7}, {%0, %1, %2, %3};"
+          asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
+                  : "+r"(acc.x[0]), "+r"(acc.x[1]), "+r"(acc.x[2]), "+r"(acc.x[3])
+                  : "r"(A.x[0]), "r"(A.x[1]), "r"(A.x[2]), "r"(A.x[3]), "r"(B.x[0]), "r"(B.x[1]));
+
+          // asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5}, {%6, %7}, {%0, %1, %2, %3};"
           //         : "+r"(acc.x[0]), "+r"(acc.x[1]), "+r"(acc.x[2]), "+r"(acc.x[3])
-          //         : "r"(A.x[0]), "r"(A.x[1])
-          //         : "r"(B.x[0]), "r"(B.x[1]));
+          //         : "r"(A.x[0]), "r"(A.x[1]), "r"(B.x[0]), "r"(B.x[1]));
 
           for (int i = 0; i<4; i++)
           {
