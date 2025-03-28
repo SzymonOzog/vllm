@@ -107,7 +107,7 @@ static __device__ __forceinline__ void moe_q(
       tile<16, 8, int> acc;
 
       for (int k = ir * WARP_SIZE_GGUF / qr; k < (ir + 1) * WARP_SIZE_GGUF / qr;
-           k += 4) 
+           k += 8) 
       {
           int row =  threadIdx.y * 16 + lane_id>>2;
           int col = lane_id%4 + k;
@@ -127,7 +127,7 @@ static __device__ __forceinline__ void moe_q(
           dsx[1] = tile_x_dm[row*(9) + k/4];
 
           row = lane_id>>2;
-          col = lane_id%4 + k*2;
+          col = lane_id%4 + (k%(WARP_SIZE_GGUF/qr));
           B.x[0] = tile_y_qs[row*WARP_SIZE_GGUF + col];
           col+=4;
           B.x[1] = tile_y_qs[row*WARP_SIZE_GGUF + col];
@@ -149,6 +149,8 @@ static __device__ __forceinline__ void moe_q(
               sum[i] += (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[i/2].x;
               sum[i] += (float)dsy[i%2].y * (float)dsx[i/2].y;
           }
+          if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+              printf("loaded mma A %d/%d, k %d, sum %f \n", row, col, k, sum[0]);
       }
 
 
@@ -172,7 +174,7 @@ static __device__ __forceinline__ void moe_q(
   }
 
 #if FAST_MMA
-    const int2 col_dst = reinterpret_cast<int2*>(sorted_token_ids[col_dst_0])[lane_id%4];
+    const int2 col_dst = reinterpret_cast<const int2*>(&sorted_token_ids[col_dst_0])[lane_id%4];
     if (col_dst.x < ncols_dst)
     {
         dst[col_dst.x*nrows_dst + lane_id>>2] = sum[0];
@@ -635,9 +637,9 @@ static void ggml_moe_q3_K_q8_1_cuda(
   #define MOE_Y_Q4_K 128
   #define NWARPS_Q4_K 8
 #else
-  #define MOE_X_Q4_K 4
+  #define MOE_X_Q4_K 8
   #define MOE_Y_Q4_K 32
-  #define NWARPS_Q4_K 4
+  #define NWARPS_Q4_K_MOE 2
 #endif
 
 template <typename scalar_t, bool need_check>
@@ -653,7 +655,7 @@ __launch_bounds__(WARP_SIZE_GGUF* NWARPS_Q4_K, 2)
              const int top_k) {
   const int mmq_x = MOE_X_Q4_K;
   const int mmq_y = MOE_Y_Q4_K;
-  const int nwarps = NWARPS_Q4_K;
+  const int nwarps = NWARPS_Q4_K_MOE;
 
   moe_q<scalar_t, QK_K, QR4_K, QI4_K, true, block_q4_K, mmq_x, mmq_y, nwarps,
         allocate_tiles_q4_K<mmq_y>, load_tiles_q4_K<mmq_y, nwarps, need_check>,
