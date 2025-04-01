@@ -1221,6 +1221,16 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_K(
 #endif // FAST_MMA
 }
 
+static __device__ __forceinline__ int unpack_scales_q45_K(const int * scales, const int ksc) {
+    // scale arrangement after the following two lines:
+    //   - ksc == 0: sc0, sc1, sc2, sc3
+    //   - ksc == 1: sc4, sc5, sc6, sc7
+    //   - ksc == 2:  m0,  m1,  m2,  m3
+    //   - ksc == 3:  m4,  m5,  m6,  m7
+    return ((scales[(ksc%2) + (ksc!=0)] >> (4 * (ksc & (ksc/2)))) & 0x0F0F0F0F) | // lower 4 bits
+           ((scales[ksc/2]              >> (2 * (ksc % 2)))       & 0x30303030);  // upper 2 bits
+}
+
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_K(
     const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
@@ -1238,7 +1248,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         }
         const block_q4_K * bxi = bx0 + i*blocks_per_row + kbx;
 #if FAST_MMA
-        int packed = get_int_from_uint8_aligned(bxi->qs, kqsx);
+        int packed = get_int_from_uint8_aligned(bxi->qs, k);
         x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8] = (packed) & 0x0F0F0F0F;
         x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8 + 8] = (packed >> 4) & 0x0F0F0F0F;
 #else
@@ -1256,27 +1266,22 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         if (need_check) {
             i = min(i, i_max);
         }
-        const block_q4_K * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q4_K * bxi = bx0 + i*blocks_per_row;// + kbxd;
         half2 b_dm = bxi->dm * make_half2(1.0f, -1.0f);
 
         const int * scales = (const int *) bxi->scales;
 
         int ksc = k%2;
 
-        int sc32 = (scales[(ksc%2) + (ksc!=0)] >> (4 * (ksc & (ksc/2)))) & 0x0F0F0F0F; // lower 4 bits
-        sc32    |= (scales[ksc/2]              >> (2 * (ksc % 2)))       & 0x30303030; // upper 2 bits
-
-        int ksc2 = ksc+2;
-
-        int m32 = (scales[(ksc2%2) + (ksc2!=0)] >> (4 * (ksc2 & (ksc2/2)))) & 0x0F0F0F0F; // lower 4 bits
-        m32    |= (scales[ksc2/2]              >> (2 * (ksc2 % 2)))       & 0x30303030; // upper 2 bits
+        int sc32 = unpack_scales_q45_K(scales, ksc);
+        int m32 = unpack_scales_q45_K(scales, ksc+2);
         
         const uint8_t * sc8 = (const uint8_t*) &sc32;
         const uint8_t * m8 = (const uint8_t*) &m32;
 #pragma unroll
         for (int l = 0; l < sizeof(int); ++l)
         {
-            x_dm[i*(9) + sizeof(int)*ksc + i] = b_dm * make_half2(sc8[l], m8[l]);
+            x_dm[i*(9) + sizeof(int)*ksc + l] = b_dm * make_half2(sc8[l], m8[l]);
         }
     }
 

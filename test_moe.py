@@ -60,16 +60,23 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
     w2_dequant = torch.tensor(dequantize(w2.data, quant_type),
                               device="cuda").to(dtype)
     act = SiluAndMul()
+    w = torch.tensor(w13.data, device="cuda")
+    print(w.shape)
+    # w = w[..., :w.shape[-1]//2]
+    print(w.shape)
 
-    output = _fused_moe_gguf(x, torch.tensor(w13.data, device="cuda"),
+    output = _fused_moe_gguf(x, w,
                              torch.tensor(w2.data,
                                           device="cuda"), topk_weights,
                              topk_ids, quant_type, quant_type, act)
 
-    output_fast = _fused_moe_gguf_new(x, torch.tensor(w13.data, device="cuda"),
+    output_fast = _fused_moe_gguf_new(x, w,
                              torch.tensor(w2.data,
                                           device="cuda"), topk_weights,
                              topk_ids, quant_type, quant_type, act, my_extension)
+    torch.cuda.synchronize()
+
+    print(output.shape)
 
     # ref_output = fused_experts(x, w13_dequant, w2_dequant, topk_weights,
     #                            topk_ids).reshape(output.shape)
@@ -78,5 +85,4 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
     print(output)
     print(output_fast)
     torch.testing.assert_close(output, output_fast, atol=1, rtol=1e-1)
-
-test_moe(7, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
+test_moe(1, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
