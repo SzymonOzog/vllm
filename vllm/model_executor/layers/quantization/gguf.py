@@ -155,7 +155,7 @@ def _fused_moe_gguf(
         out = ops.ggml_moe_a8(x, w1, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type, N, top_k,
                               num_tokens)
-        return out
+        # return out
         out = act(out)
         out = ops.ggml_moe_a8(out, w2, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type2,
@@ -214,7 +214,7 @@ def _fused_moe_gguf_new(
         out = ext.ggml_moe_a8(x, w1, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type, N, top_k,
                               num_tokens)
-        return out
+        # return out
         out = act(out)
         out = ext.ggml_moe_a8(out, w2, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type2,

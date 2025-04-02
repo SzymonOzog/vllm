@@ -1,11 +1,10 @@
-
-# SPDX-License-Identifier: Apache-2.0
-
 from pathlib import Path
+from PIL import Image
 
 import pytest
 import torch
 from gguf import GGMLQuantizationType, GGUFReader, ReaderTensor, dequantize
+import numpy as np
 from huggingface_hub import snapshot_download
 
 import vllm._custom_ops as ops
@@ -84,5 +83,15 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
     # torch.testing.assert_close(output, ref_output, atol=1, rtol=1e-1)
     print(output)
     print(output_fast)
-    torch.testing.assert_close(output, output_fast, atol=1, rtol=1e-1)
+
+    # print(output[7, 12:42])
+    # print(output_fast[7, 12:42])
+    # print(ref_output[7, 12:42])
+    img = torch.isclose(output, output_fast, atol=1e-1, rtol=1e-1).cpu().numpy().astype(np.uint8) * 255
+    # Convert to PIL image
+    image = Image.fromarray(img, mode="L")  # "L" mode for grayscale
+
+    image.save("boolean_tensor.png")
+
+    torch.testing.assert_close(output, output_fast, atol=1e-2, rtol=1e-1)
 test_moe(1, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)

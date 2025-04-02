@@ -1248,9 +1248,14 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         }
         const block_q4_K * bxi = bx0 + i*blocks_per_row + kbx;
 #if FAST_MMA
-        int packed = get_int_from_uint8_aligned(bxi->qs, k);
+        int packed = get_int_from_uint8_aligned(bxi->qs, kqsx);
         x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8] = (packed) & 0x0F0F0F0F;
         x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8 + 8] = (packed >> 4) & 0x0F0F0F0F;
+
+            // if(blockIdx.x == 0 && blockIdx.y == 0)
+            //     printf("thread %d/%d(%d,%d), loading value to row %d, col %d, from block %d, %d %010x, %010x, %010x\n", threadIdx.x, threadIdx.y, k, kqsx, i, 16*(k/8) + k%8, 
+            //             i, kbx, packed, x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8],
+            //             x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8 + 8]);
 #else
         x_ql[i * (WARP_SIZE_GGUF + 1) + k] = get_int_from_uint8_aligned(bxi->qs, kqsx);
 #endif // FAST_MMA
@@ -1269,7 +1274,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         const block_q4_K * bxi = bx0 + i*blocks_per_row;// + kbxd;
         half2 b_dm = bxi->dm * make_half2(1.0f, -1.0f);
 
-        const int * scales = (const int *) bxi->scales;
+        const int * scales = (const int *) bxi->scales;// + kbxd;
 
         int ksc = k%2;
 
@@ -1278,10 +1283,22 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         
         const uint8_t * sc8 = (const uint8_t*) &sc32;
         const uint8_t * m8 = (const uint8_t*) &m32;
+        // if(blockIdx.x == 0 && blockIdx.y == 0)
+        // {
+        //     printf("thread %d/%d, loading scale to row %d, from block ksc %d, i0 %d, i_offset %d  k %d, test %d, %d\n", 
+        //             threadIdx.x, threadIdx.y, i, ksc, i0, i_offset, k, 8, 9);
+        // }
 #pragma unroll
         for (int l = 0; l < sizeof(int); ++l)
         {
-            x_dm[i*(9) + sizeof(int)*ksc + l] = b_dm * make_half2(sc8[l], m8[l]);
+            int off = sizeof(int)*ksc + l;
+            x_dm[i*(9) + off] = b_dm * make_half2(sc8[l], m8[l]);
+
+            // if(blockIdx.x == 0 && blockIdx.y == 0)
+            // {
+            //     printf("thread %d/%d, loading scale %f, %f to row %d, from block ksc %d, i0 %d, i_offset %d  k %d, test %d, %d\n", 
+            //             threadIdx.x, threadIdx.y,(float)x_dm[i*(9) + off].x, (float)x_dm[i*(9) + off].y, i, off, i0, i_offset, k, 8, 9);
+            // }
         }
     }
 

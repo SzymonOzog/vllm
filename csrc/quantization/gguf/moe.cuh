@@ -23,7 +23,7 @@ static __device__ __forceinline__ void moe_q(
 
   const int ncols_dst = ncols_y * top_k;
 
-  const auto row_dst_0 = blockIdx.x * mmq_y + threadIdx.y * 16;
+  const auto row_dst_0 = blockIdx.x * mmq_y;// + threadIdx.y * 16;
   const int& row_x_0 = row_dst_0;
 
   const auto col_dst_0 = blockIdx.y * mmq_x;
@@ -61,8 +61,8 @@ static __device__ __forceinline__ void moe_q(
     load_tiles(x + row_x_0 * blocks_per_row_x + ib0, tile_x_ql, tile_x_dm,
                tile_x_qh, tile_x_sc, threadIdx.y, nrows_x - row_x_0 - 1,
                threadIdx.x, blocks_per_row_x);
-  __syncthreads();
-  // if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+  // __syncthreads();
+  // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
   // {
   //     printf("------------\n");
   //     for (int t = 0; t<mmq_y * (2 * WARP_SIZE_GGUF) + mmq_y; t++)
@@ -73,7 +73,7 @@ static __device__ __forceinline__ void moe_q(
   //     }
   //     printf("------------\n");
   // }
-  // if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+  // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
   // {
   //     printf("------------\n");
   //     for (int t = 0; t<mmq_y * (8) + mmq_y; t++)
@@ -104,10 +104,10 @@ static __device__ __forceinline__ void moe_q(
         }
       }
       
-
-      if (threadIdx.x < n_per_r / QK8_1) {
-        const auto kby = threadIdx.x % (WARP_SIZE_GGUF / QI8_1);
+      // if (threadIdx.x < n_per_r / QK8_1) {
 #if FAST_MMA
+      if ((lane_id>>2) < n_per_r / QK8_1) {
+        const auto kby = (lane_id>>2) % (WARP_SIZE_GGUF / QI8_1);
         {
             const int col_y_eff = col_dst.x / top_k;
             const int block_x =
@@ -116,9 +116,7 @@ static __device__ __forceinline__ void moe_q(
             if (col_y_eff < ncols_y && block_x < blocks_per_col_y) {
                 const half2* dsi_src = &y[col_y_eff * blocks_per_col_y + block_x].ds;
                 half2* dsi_dst =
-                    &tile_y_ds[threadIdx.y * (WARP_SIZE_GGUF / QI8_1) + kby];
-            // if(blockIdx.x == 0 && blockIdx.y == 0)
-            //     printf("loaded col %d\n", col_y_eff);
+                    &tile_y_ds[(lane_id%4)*2 * (WARP_SIZE_GGUF / QI8_1) + kby];
 
                 if (need_sum) {
                     *dsi_dst = *dsi_src;
@@ -136,7 +134,7 @@ static __device__ __forceinline__ void moe_q(
             if (col_y_eff < ncols_y && block_x < blocks_per_col_y) {
                 const half2* dsi_src = &y[col_y_eff * blocks_per_col_y + block_x].ds;
                 half2* dsi_dst =
-                    &tile_y_ds[threadIdx.y * (WARP_SIZE_GGUF / QI8_1) + kby];
+                    &tile_y_ds[((lane_id%4)*2 + 1) * (WARP_SIZE_GGUF / QI8_1) + kby];
 
                 if (need_sum) {
                     *dsi_dst = *dsi_src;
@@ -147,6 +145,8 @@ static __device__ __forceinline__ void moe_q(
             }
         }
 #else
+      if (threadIdx.x < n_per_r / QK8_1) {
+        const auto kby = threadIdx.x % (WARP_SIZE_GGUF / QI8_1);
         const int col_y_eff = token_offs[threadIdx.y] / top_k;
         const int block_x =
             ib0 * (qk / QK8_1) + ir * (WARP_SIZE_GGUF / QI8_1) + kby;
@@ -166,7 +166,7 @@ static __device__ __forceinline__ void moe_q(
 #endif
       }
       __syncthreads();
-      // if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+      // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
       // {
       //     printf("-----Y-------\n");
       //     for (int t = 0; t<mmq_x * WARP_SIZE_GGUF / QI8_1; t++)
@@ -181,63 +181,100 @@ static __device__ __forceinline__ void moe_q(
 #if FAST_MMA
       tile<16, 8, int> A;
       tile<8, 8, int> B;
-      tile<16, 8, int> acc;
+      // tile<16, 8, int> acc;
 
       for (int k = ir * 2*WARP_SIZE_GGUF / qr; k < (ir + 1) * 2*WARP_SIZE_GGUF / qr;
            k += 8) 
       {
+          tile<16, 8, int> acc;
           int row =  threadIdx.y * 16 + (lane_id>>2);
           int col = lane_id%4 + k;
           half2 dsx[2];
 
 
           dsx[0] = tile_x_dm[row*(9) + k/8];
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("loading a scale_0 %d, %d %f,%f\n", row, k/8, (float)dsx[0].x, (float)dsx[0].y);
+          // }
           A.x[0] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("loading a 0 %d, %d %010x\n", row, col, A.x[0]);
+          // }
           row+=8;
           A.x[1] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("loading a 1 %d, %d %010x\n", row, col, A.x[1]);
+          // }
           row-=8;
           col+=4;
           A.x[2] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("loading a 2 %d, %d %010x\n", row, col, A.x[2]);
+          // }
           row+=8;
           A.x[3] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("loading a 3 %d, %d %010x\n", row, col, A.x[3]);
+          // }
 
           dsx[1] = tile_x_dm[row*(9) + k/8];
-          if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
-          {
-              printf("doing mma %d between %d, %d, and %d, %d\n", ir, row-8, col, lane_id>>2, (k%(2*WARP_SIZE_GGUF/qr)));
-          }
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("loading a scale_1 %d, %d %f,%f\n", row, k/8, (float)dsx[1].x, (float)dsx[1].y);
+          // }
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("doing mma %d between %d, %d, and %d, %d\n", ir, row-8, col, lane_id>>2, (k%(2*WARP_SIZE_GGUF/qr)));
+          // }
 
           row = lane_id>>2;
           col = lane_id%4 + (k%(2*WARP_SIZE_GGUF/qr));
           B.x[0] = tile_y_qs[row*WARP_SIZE_GGUF + col];
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("loading b0 %d, %d %010x\n", row, col, B.x[0]);
+          // }
           col+=4;
           B.x[1] = tile_y_qs[row*WARP_SIZE_GGUF + col];
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("loading b1 %d, %d %010x\n", row, col, B.x[1]);
+          // }
 
           half2 dsy[2];
-          dsy[0] = tile_y_ds[(lane_id%4)*(WARP_SIZE_GGUF/QI8_1)];
-          dsy[1] = tile_y_ds[(lane_id%4 + 1)*(WARP_SIZE_GGUF/QI8_1)];
+          dsy[0] = tile_y_ds[(lane_id%4)*(WARP_SIZE_GGUF/QI8_1) + col/8];
+          dsy[1] = tile_y_ds[(lane_id%4 + 1)*(WARP_SIZE_GGUF/QI8_1) + col/8];
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     printf("loading b scale 0 %d, %d %f,%f\n", (lane_id%4), col/8, (float)dsy[0].x, (float)dsy[0].y);
+          //     printf("loading b scale 1 %d, %d %f,%f\n", (lane_id%4 + 1), col/8, (float)dsy[1].x, (float)dsy[1].y);
+          // }
 
           asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
                   : "+r"(acc.x[0]), "+r"(acc.x[1]), "+r"(acc.x[2]), "+r"(acc.x[3])
                   : "r"(A.x[0]), "r"(A.x[1]), "r"(A.x[2]), "r"(A.x[3]), "r"(B.x[0]), "r"(B.x[1]));
 
-          for (int i = 0; i<acc::ne; i++)
+          for (int i = 0; i<4; i++)
           {
               sum[i] += (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[i/2].x;
               sum[i] += (float)dsy[i%2].y * (float)dsx[i/2].y;
-
-
           }
-          if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
-          {
-              int i = 0;
-              printf("adding %f and shifting by %f\n", (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[i/2].x,
-                     (float)dsy[i%2].y * (float)dsx[i/2].y );
-              printf("loaded mma A %d/%d, k %d, sum %f, acc %f, scale %f,%f and %f,%f \n", row, col, k, sum[i], (float)acc.x[i],
-                      (float)dsx[i].x, (float)dsx[i].y, (float)dsy[i].x, (float)dsy[i].y);
-          }
-          if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
-              printf("\n\n");
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          // {
+          //     int i = 0;
+          //     printf("adding %f and shifting by %f\n", (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[i/2].x,
+          //            (float)dsy[i%2].y * (float)dsx[i/2].y );
+          //     printf("loaded mma A %d/%d, k %d, sum %f, acc %f,\n a %010x b %010x scale %f,%f and %f,%f \n", row, col, k, sum[i], (float)acc.x[i],
+          //             A.x[0], B.x[0],
+          //             (float)dsx[i].x, (float)dsx[i].y, (float)dsy[i].x, (float)dsy[i].y);
+          // }
+          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+          //     printf("\n\n");
       }
 
 
@@ -261,9 +298,9 @@ static __device__ __forceinline__ void moe_q(
   }
 
 #if FAST_MMA
-    int row_dst = row_dst_0 + (lane_id>>2);
+    int row_dst = row_dst_0 + (lane_id>>2) + threadIdx.y * 16;
     // if (lane_id == 0 )
-          // if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+    //       if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
     // {
     //     printf("thread %d, %d(%d,%d), saving %f to %d, %d, %d \n", threadIdx.x, threadIdx.y, blockIdx.x, blockIdx.y, (float)sum[0], col_dst.x, col_dst.y, row_dst);
     // }
