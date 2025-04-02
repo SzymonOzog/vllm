@@ -179,65 +179,61 @@ static __device__ __forceinline__ void moe_q(
       // }
 
 #if FAST_MMA
-      tile<16, 8, int> A;
+      tile<16, 8, int> A_tiles[2];
       tile<8, 8, int> B;
       // tile<16, 8, int> acc;
 
      #pragma unroll
-      for (int k = ir * 2*WARP_SIZE_GGUF / qr; k < (ir + 1) * 2*WARP_SIZE_GGUF / qr;
-           k += 8) 
+      for (int k = ir * WARP_SIZE_GGUF / qr; k < (ir + 1) * WARP_SIZE_GGUF / qr;
+           k += 16) 
       {
-          tile<16, 8, int> acc;
           int row =  threadIdx.y * 16 + (lane_id>>2);
-          int col = lane_id%4 + k;
-          half2 dsx[2];
+          int col = lane_id%4 + k/2;
+          half2 dsx[2][2];
 
 
-          load_ldmatrix(A, &tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col], (2*WARP_SIZE_GGUF + 1));
-          dsx[0] = tile_x_dm[row*(9) + k/8];
-          row+=8;
-          dsx[1] = tile_x_dm[row*(9) + k/8];
-          // A.x[0] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
-          // row+=8;
-          // A.x[1] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
-          // row-=8;
-          // col+=4;
-          // A.x[2] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
-          // row+=8;
-          // A.x[3] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
-
-
-          row = lane_id>>2;
-          col = lane_id%4 + (k%(2*WARP_SIZE_GGUF/qr));
-          B.x[0] = tile_y_qs[row*WARP_SIZE_GGUF + col];
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("loading b0 %d, %d %010x\n", row, col, B.x[0]);
-          // }
-          col+=4;
-          B.x[1] = tile_y_qs[row*WARP_SIZE_GGUF + col];
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("loading b1 %d, %d %010x\n", row, col, B.x[1]);
-          // }
-
-          half2 dsy[2];
-          dsy[0] = tile_y_ds[(lane_id%4)*(WARP_SIZE_GGUF/QI8_1) + col/8];
-          dsy[1] = tile_y_ds[(lane_id%4 + 1)*(WARP_SIZE_GGUF/QI8_1) + col/8];
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("loading b scale 0 %d, %d %f,%f\n", (lane_id%4), col/8, (float)dsy[0].x, (float)dsy[0].y);
-          //     printf("loading b scale 1 %d, %d %f,%f\n", (lane_id%4 + 1), col/8, (float)dsy[1].x, (float)dsy[1].y);
-          // }
-
-          asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
-                  : "+r"(acc.x[0]), "+r"(acc.x[1]), "+r"(acc.x[2]), "+r"(acc.x[3])
-                  : "r"(A.x[0]), "r"(A.x[1]), "r"(A.x[2]), "r"(A.x[3]), "r"(B.x[0]), "r"(B.x[1]));
-
+#pragma unroll
           for (int i = 0; i<4; i++)
           {
-              sum[i] += (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[i/2].x;
-              sum[i] += (float)dsy[i%2].y * (float)dsx[i/2].y;
+              int row = threadIdx.y * 16 + (lane_id>>2) + (i%2)*8;
+              int col = lane_id%4 + k/2 + (i/2)*4;
+              int packed = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+              A_tiles[0].x[i] = (packed) & 0x0F0F0F0F; A_tiles[1].x[i] = (packed>>4) & 0x0F0F0F0F;
+          }
+          dsx[0][0] = tile_x_dm[row*(9) + k/8];
+          row+=8;
+          dsx[0][1] = tile_x_dm[row*(9) + k/8];
+
+          row-=8;
+          dsx[1][0] = tile_x_dm[row*(9) + k/8 + 1];
+          row+=8;
+          dsx[1][1] = tile_x_dm[row*(9) + k/8 + 1];
+
+        #pragma unroll
+          for (int k00 = 0; k00 < 2; k00 ++)
+          {
+              tile<16, 8, int> acc;
+              tile<16, 8, int>& A = A_tiles[k00];
+              row = lane_id>>2;
+              col = lane_id%4 + k + k00*8;
+              B.x[0] = tile_y_qs[row*WARP_SIZE_GGUF + col];
+              col+=4;
+              B.x[1] = tile_y_qs[row*WARP_SIZE_GGUF + col];
+
+              half2 dsy[2];
+              dsy[0] = tile_y_ds[(lane_id%4)*(WARP_SIZE_GGUF/QI8_1) + col/8];
+              dsy[1] = tile_y_ds[(lane_id%4 + 1)*(WARP_SIZE_GGUF/QI8_1) + col/8];
+
+              asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
+                      : "+r"(acc.x[0]), "+r"(acc.x[1]), "+r"(acc.x[2]), "+r"(acc.x[3])
+                      : "r"(A.x[0]), "r"(A.x[1]), "r"(A.x[2]), "r"(A.x[3]), "r"(B.x[0]), "r"(B.x[1]));
+
+        #pragma unroll
+              for (int i = 0; i<4; i++)
+              {
+                  sum[i] += (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[k00][i/2].x;
+                  sum[i] += (float)dsy[i%2].y * (float)dsx[k00][i/2].y;
+              }
           }
           // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
           // {

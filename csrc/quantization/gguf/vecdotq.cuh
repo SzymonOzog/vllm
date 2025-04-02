@@ -1203,7 +1203,7 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
 
 template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
 #if FAST_MMA
-    __shared__ int   tile_x_ql[(mmq_y * (2 * WARP_SIZE_GGUF)  + mmq_y)];
+    __shared__ int   tile_x_ql[(mmq_y * (WARP_SIZE_GGUF)  + mmq_y)];
     __shared__ half2 tile_x_dm[mmq_y * (8) + mmq_y];
     // __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE_GGUF/8)     + mmq_y/8];
 
@@ -1247,18 +1247,18 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
         const block_q4_K * bxi = bx0 + i*blocks_per_row + kbx;
-#if FAST_MMA
-        int packed = get_int_from_uint8_aligned(bxi->qs, kqsx);
-        x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8] = (packed) & 0x0F0F0F0F;
-        x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8 + 8] = (packed >> 4) & 0x0F0F0F0F;
-
-            // if(blockIdx.x == 0 && blockIdx.y == 0)
-            //     printf("thread %d/%d(%d,%d), loading value to row %d, col %d, from block %d, %d %010x, %010x, %010x\n", threadIdx.x, threadIdx.y, k, kqsx, i, 16*(k/8) + k%8, 
-            //             i, kbx, packed, x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8],
-            //             x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8 + 8]);
-#else
+// #if FAST_MMA
+//         int packed = get_int_from_uint8_aligned(bxi->qs, kqsx);
+//         x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8] = (packed) & 0x0F0F0F0F;
+//         x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8 + 8] = (packed >> 4) & 0x0F0F0F0F;
+//
+//             // if(blockIdx.x == 0 && blockIdx.y == 0)
+//             //     printf("thread %d/%d(%d,%d), loading value to row %d, col %d, from block %d, %d %010x, %010x, %010x\n", threadIdx.x, threadIdx.y, k, kqsx, i, 16*(k/8) + k%8, 
+//             //             i, kbx, packed, x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8],
+//             //             x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8 + 8]);
+// #else
         x_ql[i * (WARP_SIZE_GGUF + 1) + k] = get_int_from_uint8_aligned(bxi->qs, kqsx);
-#endif // FAST_MMA
+// #endif // FAST_MMA
 
     }
 
