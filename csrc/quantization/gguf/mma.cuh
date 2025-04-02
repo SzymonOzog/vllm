@@ -179,20 +179,16 @@
 //         load_generic(xs0, stride);
 // #endif // FAST_MMA
 //     }
-//
-//     template <typename T>
-//     static __device__ __forceinline__ void load_ldmatrix(
-//             tile<16, 8, T> & t, const T * __restrict__ xs0, const int stride) {
-// #ifdef FAST_MMA
-//         int * xi = (int * ) t.x;
-//         const int * xs = (const int *) xs0 + (threadIdx.x % t.I) * stride + (threadIdx.x / t.I) * (t.J / 2);
-//         asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
-//             : "=r"(xi[0]), "=r"(xi[1]), "=r"(xi[2]), "=r"(xi[3])
-//             : "l"(xs));
-// #else
-//         load_generic(t, xs0, stride);
-// #endif // FAST_MMA
-//     }
+
+    template <typename T>
+    static __device__ __forceinline__ void load_ldmatrix(
+            tile<16, 8, T> & t, const T * __restrict__ xs0, const int stride) {
+        int * xi = (int * ) t.x;
+        const int * xs = (const int *) xs0 + (threadIdx.x % t.I) * stride + (threadIdx.x / t.I) * (t.J / 2);
+        asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
+            : "=r"(xi[0]), "=r"(xi[1]), "=r"(xi[2]), "=r"(xi[3])
+            : "l"(xs));
+    }
 //
 //     template <typename T>
 //     static __device__ __forceinline__ void load_ldmatrix_trans(

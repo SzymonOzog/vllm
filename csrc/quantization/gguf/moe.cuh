@@ -183,6 +183,7 @@ static __device__ __forceinline__ void moe_q(
       tile<8, 8, int> B;
       // tile<16, 8, int> acc;
 
+     #pragma unroll
       for (int k = ir * 2*WARP_SIZE_GGUF / qr; k < (ir + 1) * 2*WARP_SIZE_GGUF / qr;
            k += 8) 
       {
@@ -192,45 +193,19 @@ static __device__ __forceinline__ void moe_q(
           half2 dsx[2];
 
 
+          load_ldmatrix(A, &tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col], (2*WARP_SIZE_GGUF + 1));
           dsx[0] = tile_x_dm[row*(9) + k/8];
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("loading a scale_0 %d, %d %f,%f\n", row, k/8, (float)dsx[0].x, (float)dsx[0].y);
-          // }
-          A.x[0] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("loading a 0 %d, %d %010x\n", row, col, A.x[0]);
-          // }
           row+=8;
-          A.x[1] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("loading a 1 %d, %d %010x\n", row, col, A.x[1]);
-          // }
-          row-=8;
-          col+=4;
-          A.x[2] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("loading a 2 %d, %d %010x\n", row, col, A.x[2]);
-          // }
-          row+=8;
-          A.x[3] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("loading a 3 %d, %d %010x\n", row, col, A.x[3]);
-          // }
-
           dsx[1] = tile_x_dm[row*(9) + k/8];
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("loading a scale_1 %d, %d %f,%f\n", row, k/8, (float)dsx[1].x, (float)dsx[1].y);
-          // }
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     printf("doing mma %d between %d, %d, and %d, %d\n", ir, row-8, col, lane_id>>2, (k%(2*WARP_SIZE_GGUF/qr)));
-          // }
+          // A.x[0] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+          // row+=8;
+          // A.x[1] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+          // row-=8;
+          // col+=4;
+          // A.x[2] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+          // row+=8;
+          // A.x[3] = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+
 
           row = lane_id>>2;
           col = lane_id%4 + (k%(2*WARP_SIZE_GGUF/qr));
