@@ -184,7 +184,7 @@ static __device__ __forceinline__ void moe_q(
       // tile<16, 8, int> acc;
 
      #pragma unroll
-      for (int k = ir * WARP_SIZE_GGUF / qr; k < (ir + 1) * WARP_SIZE_GGUF / qr;
+      for (int k = ir * 2 * WARP_SIZE_GGUF / qr; k < (ir + 1) * 2 * WARP_SIZE_GGUF / qr;
            k += 16) 
       {
           int row =  threadIdx.y * 16 + (lane_id>>2);
@@ -197,7 +197,7 @@ static __device__ __forceinline__ void moe_q(
           {
               int row = threadIdx.y * 16 + (lane_id>>2) + (i%2)*8;
               int col = lane_id%4 + k/2 + (i/2)*4;
-              int packed = tile_x_ql[row*(2*WARP_SIZE_GGUF+1) + col];
+              int packed = tile_x_ql[row*(WARP_SIZE_GGUF+1) + col];
               A_tiles[0].x[i] = (packed) & 0x0F0F0F0F; A_tiles[1].x[i] = (packed>>4) & 0x0F0F0F0F;
           }
           dsx[0][0] = tile_x_dm[row*(9) + k/8];
@@ -215,7 +215,7 @@ static __device__ __forceinline__ void moe_q(
               tile<16, 8, int> acc;
               tile<16, 8, int>& A = A_tiles[k00];
               row = lane_id>>2;
-              col = lane_id%4 + k + k00*8;
+              col = lane_id%4 + (k%(2*WARP_SIZE_GGUF/qr)) + k00*8;
               B.x[0] = tile_y_qs[row*WARP_SIZE_GGUF + col];
               col+=4;
               B.x[1] = tile_y_qs[row*WARP_SIZE_GGUF + col];
@@ -234,16 +234,13 @@ static __device__ __forceinline__ void moe_q(
                   sum[i] += (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[k00][i/2].x;
                   sum[i] += (float)dsy[i%2].y * (float)dsx[k00][i/2].y;
               }
+              // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
+              // {
+              //     int i = 0;
+              //     printf("loaded mma A %d/%d, k %d, sum %f, acc %f, a %010x b %010x\n", row, col, k, sum[i], (float)acc.x[i],
+              //             A.x[0], B.x[0]);
+              // }
           }
-          // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-          // {
-          //     int i = 0;
-          //     printf("adding %f and shifting by %f\n", (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[i/2].x,
-          //            (float)dsy[i%2].y * (float)dsx[i/2].y );
-          //     printf("loaded mma A %d/%d, k %d, sum %f, acc %f,\n a %010x b %010x scale %f,%f and %f,%f \n", row, col, k, sum[i], (float)acc.x[i],
-          //             A.x[0], B.x[0],
-          //             (float)dsx[i].x, (float)dsx[i].y, (float)dsy[i].x, (float)dsy[i].y);
-          // }
           // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
           //     printf("\n\n");
       }
