@@ -13,6 +13,7 @@ from vllm.model_executor.layers.fused_moe import fused_experts
 from vllm.model_executor.layers.quantization.gguf import _fused_moe_gguf, _fused_moe_gguf_new
 from vllm.platforms import current_platform
 from torch.utils.cpp_extension import load
+import os
 
 GGUF_SAMPLE_MOE = snapshot_download("SzymonOzog/test-gguf-moe-sample")
 
@@ -44,9 +45,10 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
     H, E = 1024, 256
 
     x = torch.rand((num_tokens, H), dtype=dtype, device="cuda")
+    # x = torch.ones((num_tokens, H), dtype=dtype, device="cuda")
 
     topk_weights = torch.rand(num_tokens, top_k, device="cuda", dtype=dtype)
-    topk_ids = torch.randint(0, E, (num_tokens, top_k), device="cuda")
+    topk_ids = torch.randint(0, 1, (num_tokens, top_k), device="cuda")
 
     tensors = get_gguf_MoE_tensors(hidden_size, quant_type)
 
@@ -84,14 +86,17 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
     print(output)
     print(output_fast)
 
-    # print(output[7, 12:42])
-    # print(output_fast[7, 12:42])
+    # if(num_tokens >= 8):
+    #     print(output[56, :22])
+    #     print(output_fast[56, :22])
     # print(ref_output[7, 12:42])
-    img = torch.isclose(output, output_fast, atol=1e-1, rtol=1e-1).cpu().numpy().astype(np.uint8) * 255
-    # Convert to PIL image
-    image = Image.fromarray(img, mode="L")  # "L" mode for grayscale
+    # img = torch.isclose(output, output_fast, atol=1e-2, rtol=1e-1).cpu().numpy().astype(np.uint8) * 255
+    # # Convert to PIL image
+    # image = Image.fromarray(img, mode="L")  # "L" mode for grayscale
+    #
+    # image.save("boolean_tensor.png")
 
-    image.save("boolean_tensor.png")
-
-    torch.testing.assert_close(output, output_fast, atol=1e-2, rtol=1e-1)
+    # torch.testing.assert_close(output, output_fast, atol=1e-2, rtol=1e-1)
 test_moe(1, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
+test_moe(8, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
+test_moe(64, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)

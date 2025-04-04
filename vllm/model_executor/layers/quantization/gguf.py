@@ -211,12 +211,16 @@ def _fused_moe_gguf_new(
 
         sorted_token_ids, expert_ids, num_tokens_post_padded = \
                 moe_align_block_size(topk_ids, BLOCK_SIZE, E)
-        out = ext.ggml_moe_a8(x, w1, sorted_token_ids, expert_ids,
+        print(sorted_token_ids)
+        print(expert_ids)
+        out = ext.ggml_moe_a8_new(x, w1, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type, N, top_k,
                               num_tokens)
         # return out
+        torch.cuda.synchronize()
+        print("running second kernel")
         out = act(out)
-        out = ext.ggml_moe_a8(out, w2, sorted_token_ids, expert_ids,
+        out = ext.ggml_moe_a8_new(out, w2, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type2,
                               w2.shape[1], 1, num_tokens * top_k)
         out = out.reshape(num_tokens, top_k, w2.shape[1]).mul_(

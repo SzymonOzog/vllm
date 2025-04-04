@@ -84,7 +84,7 @@ static __device__ __forceinline__ void moe_q(
   //     }
   //     printf("------------\n");
   // }
-
+  //
     const int n_per_r = ((qk * blocks_per_warp) / (qr));
 #pragma unroll
     for (int ir = 0; ir < qr && ib0 * qk + ir * n_per_r < ncols_x; ++ir) {
