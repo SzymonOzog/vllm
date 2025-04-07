@@ -2,6 +2,19 @@
 #include "mma.cuh"
 
 #define FAST_MMA 1
+static __device__ __forceinline__ half2 unpack_scales(const int4& scales, const int idx)
+{
+    half2 ds = reinterpret_cast<const half2*>(&scales.x)[0] * make_half2(1.0f, -1.0f);
+    const int* sc = reinterpret_cast<const int*>(&scales.y);
+    const int k_idx = idx/4;
+    const int s_idx = idx%4;
+    int sc32 = unpack_scales_q45_K(sc, k_idx);
+    int m32 = unpack_scales_q45_K(sc, k_idx+2);
+    return ds * make_half2(
+            reinterpret_cast<const int8_t*>(sc32)[s_idx],
+            reinterpret_cast<const int8_t*>(m32)[s_idx]
+            );
+}
 
 /* Adapted from ./csrc/quantization/gguf/mmq.cuh
    based on ./vllm/model_executor/layers/fused_moe/fused_moe.py */
@@ -42,12 +55,13 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
              if (blockIdx.y * mmq_x > num_tokens_post_padded[0]) return;
 
              const int* x_qs = (vx_qs + exp_idx * exp_stride_qs);
-             const half2* x_ds = (vx_ds + exp_idx * exp_stride_ds);
+             const int4* x_ds = reinterpret_cast<const int4*>(vx_ds + exp_idx * exp_stride_ds);
 
              const block_q8_1* y = (const block_q8_1*)(vy);
 
              __shared__ int   tile_x_ql[(mmq_y * (WARP_SIZE_GGUF)  + 4 * mmq_y)];
-             __shared__ half2 tile_x_dm[mmq_y * (8) + mmq_y];
+             // __shared__ half2 tile_x_dm[mmq_y * (8) + mmq_y];
+             __shared__ int4 tile_x_dm[mmq_y];
 
              __shared__ int tile_y_qs[mmq_x * WARP_SIZE_GGUF];
              __shared__ half2 tile_y_ds[mmq_x * WARP_SIZE_GGUF / QI8_1];
@@ -65,22 +79,18 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                      const int* qs = x_qs + i*blocks_per_row_x*QI4_K + ib0*QI4_K;
                      reinterpret_cast<int4 *>(&tile_x_ql[(i-row_x_0) * (WARP_SIZE_GGUF + 4)])[threadIdx.x % 8] = 
                          reinterpret_cast<const int4*>(qs)[threadIdx.x%8];
-                     // int4 vals = 
-                     //     reinterpret_cast<const int4*>(qs)[threadIdx.x%8];
-                     // if(blockIdx.x == 0 && (col_dst.x == 0 || col_dst.y==0))
-                     //     printf("loading vals from %d, %d, to %d, %d = %010x, %010x, %010x, %010x\n", i, ib0*QI4_K, (i-row_x_0), threadIdx.x, 
-                     //             vals.x, vals.y, vals.z, vals.w);
                  }
-                 for (int i0 = 0; i0 < mmq_y; i0 += nwarps * 4) {
-                     int i = row_x_0 + i0 + threadIdx.y * 4 + threadIdx.x/8;
-                     int off = threadIdx.x % 8;
+                 for (int i0 = 0; i0 < mmq_y; i0 += nwarps * 32) {
+                     int i = row_x_0 + i0;// + threadIdx.y * 4 + threadIdx.x/8;
+                     // int off = threadIdx.x % 8;
                      if (need_check) {
                          i = min(i, nrows_x - 1);
                      }
-                     const half2* ds = x_ds + i * blocks_per_row_x * 8 + ib0*8;
+                     const int4* ds = x_ds + i * blocks_per_row_x + ib0;
                      // if(threadIdx.x == 1 && threadIdx.y == 0 && blockIdx.x == 0 && (col_dst.x == 0 || col_dst.y==0))
                      //     printf("loading scales from %d, %d, to %d, %d, %f, %f, ptr %p\n", i, ib0*8, (i-row_x_0), off, (float)ds[off].x, (float)ds[off].y, ds);
-                     tile_x_dm[(i-row_x_0)*9 + off] = ds[off];
+                     tile_x_dm[i] = ds[0];
+                     // tile_x_dm[(i-row_x_0)*9 + off] = ds[off];
                  }
                  __syncthreads();
                  // if(lane_id/4 == 0 && blockIdx.x == 0 && (col_dst.x == 0 || col_dst.y==0))
@@ -220,14 +230,17 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                              int packed = tile_x_ql[row*(WARP_SIZE_GGUF+4) + col];
                              A_tiles[0].x[i] = (packed) & 0x0F0F0F0F; A_tiles[1].x[i] = (packed>>4) & 0x0F0F0F0F;
                          }
-                         dsx[0][0] = tile_x_dm[row*(9) + k/8];
-                         row+=8;
-                         dsx[0][1] = tile_x_dm[row*(9) + k/8];
+                         int4 scales1 = tile_x_dm[row];
+                         int4 scales2 = tile_x_dm[row+8];
+                         dsx[0][0] = unpack_scales(scales1, k/8);//tile_x_dm[row*(9) + k/8];
+                         dsx[0][1] = unpack_scales(scales2, k/8);//tile_x_dm[row*(9) + k/8];
+                         dsx[1][0] = unpack_scales(scales1, k/8 + 1);//tile_x_dm[row*(9) + k/8];
+                         dsx[1][1] = unpack_scales(scales2, k/8 + 1);//tile_x_dm[row*(9) + k/8];
 
-                         row-=8;
-                         dsx[1][0] = tile_x_dm[row*(9) + k/8 + 1];
-                         row+=8;
-                         dsx[1][1] = tile_x_dm[row*(9) + k/8 + 1];
+                         // row-=8;
+                         // dsx[1][0] = tile_x_dm[row*(9) + k/8 + 1];
+                         // row+=8;
+                         // dsx[1][1] = tile_x_dm[row*(9) + k/8 + 1];
 
 #pragma unroll
                          for (int k00 = 0; k00 < 2; k00 ++)

@@ -78,30 +78,31 @@ static __global__ void extract(void* __restrict__ x, int* qs, half2* dms, int n_
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx/2 >= n_blocks) return;
 
-    const int block_idx = idx/2;
-    const int dm_idx = idx%2;
+    const int block_idx = idx;
+    const int dm_idx = idx;
 
     const block_q4_K* blk = (const block_q4_K *) x + block_idx; 
-    const int* scales = (const int*) blk->scales;
+    reinterpret_cast<int4*>(dms)[idx] = reinterpret_cast<const int4*>(blk)[0];
+    // const int* scales = (const int*) blk->scales;
+    //
+    // half2 b_dm = blk->dm * make_half2(1.0f, -1.0f);
+    // int sc32 = unpack_scales_q45_K(scales, dm_idx);
+    // int m32 = unpack_scales_q45_K(scales, dm_idx+2);
 
-    half2 b_dm = blk->dm * make_half2(1.0f, -1.0f);
-    int sc32 = unpack_scales_q45_K(scales, dm_idx);
-    int m32 = unpack_scales_q45_K(scales, dm_idx+2);
+    // const uint8_t * sc8 = (const uint8_t*) &sc32;
+    // const uint8_t * m8 = (const uint8_t*) &m32;
 
-    const uint8_t * sc8 = (const uint8_t*) &sc32;
-    const uint8_t * m8 = (const uint8_t*) &m32;
-
-    for (int l = 0; l < sizeof(int); ++l)
-    {
-        int off = sizeof(int)*dm_idx + l;
-        half2 scale = b_dm * make_half2(sc8[l], m8[l]);
-        dms[block_idx * SPB + off] = scale;
+    // for (int l = 0; l < sizeof(int); ++l)
+    // {
+    //     int off = sizeof(int)*dm_idx + l;
+    //     half2 scale = b_dm * make_half2(sc8[l], m8[l]);
+    //     dms[block_idx * SPB + off] = scale;
         // printf("threadIdx %d, idx %d, writing %f, %f,to block idx %d, dm_idx %d, off %d, ptr %p\n", 
         //         threadIdx.x, idx, (float)scale.x, (float)scale.y, block_idx, dm_idx, off, &dms[block_idx * SPB + off]);
-    }
+    // }
 
     const int4* vals = (const int4*) blk->qs;
-    for(int i = dm_idx; i < IPB/4; i+=2)
+    for(int i = dm_idx; i < IPB/4; i++)
     {
         reinterpret_cast<int4*>(qs + block_idx * QI4_K)[i] = vals[i];
     }

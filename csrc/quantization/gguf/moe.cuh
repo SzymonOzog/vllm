@@ -65,10 +65,10 @@ static __device__ __forceinline__ void moe_q(
   // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
   // {
   //     printf("------------\n");
-  //     for (int t = 0; t<mmq_y * (2 * WARP_SIZE_GGUF) + mmq_y; t++)
+  //     for (int t = 0; t<mmq_y * (WARP_SIZE_GGUF) + 4*mmq_y; t++)
   //     {
   //         printf("%#010x, ",tile_x_ql[t]);
-  //         if((t+1)%(65) == 0)
+  //         if((t+1)%(36) == 0)
   //             printf("\n");
   //     }
   //     printf("------------\n");
@@ -197,8 +197,9 @@ static __device__ __forceinline__ void moe_q(
           {
               int row = threadIdx.y * 16 + (lane_id>>2) + (i%2)*8;
               int col = lane_id%4 + k/2 + (i/2)*4;
-              int packed = tile_x_ql[row*(WARP_SIZE_GGUF+1) + col];
-              A_tiles[0].x[i] = (packed) & 0x0F0F0F0F; A_tiles[1].x[i] = (packed>>4) & 0x0F0F0F0F;
+              int packed = tile_x_ql[row*(WARP_SIZE_GGUF+4) + col];
+              A_tiles[0].x[i] = (packed) & 0x0F0F0F0F; 
+              A_tiles[1].x[i] = (packed>>4) & 0x0F0F0F0F;
           }
           dsx[0][0] = tile_x_dm[row*(9) + k/8];
           row+=8;
@@ -221,8 +222,8 @@ static __device__ __forceinline__ void moe_q(
               B.x[1] = tile_y_qs[row*WARP_SIZE_GGUF + col];
 
               half2 dsy[2];
-              dsy[0] = tile_y_ds[(lane_id%4)*(WARP_SIZE_GGUF/QI8_1) + col/8];
-              dsy[1] = tile_y_ds[(lane_id%4 + 1)*(WARP_SIZE_GGUF/QI8_1) + col/8];
+              dsy[0] = tile_y_ds[(lane_id%4)*2*(WARP_SIZE_GGUF/QI8_1) + col/8];
+              dsy[1] = tile_y_ds[((lane_id%4)*2 + 1)*(WARP_SIZE_GGUF/QI8_1) + col/8];
 
               asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
                       : "+r"(acc.x[0]), "+r"(acc.x[1]), "+r"(acc.x[2]), "+r"(acc.x[3])

@@ -1203,7 +1203,7 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
 
 template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
 #if FAST_MMA
-    __shared__ int   tile_x_ql[(mmq_y * (WARP_SIZE_GGUF)  + mmq_y)];
+    __shared__ int   tile_x_ql[(mmq_y * (WARP_SIZE_GGUF)  + 4*mmq_y)];
     __shared__ half2 tile_x_dm[mmq_y * (8) + mmq_y];
     // __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE_GGUF/8)     + mmq_y/8];
 
@@ -1211,7 +1211,7 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_K(
     *x_dm = tile_x_dm;
     // *x_sc = tile_x_sc;
 #else
-    __shared__ int   tile_x_ql[mmq_y * (WARP_SIZE_GGUF)       + mmq_y];
+    __shared__ int   tile_x_ql[mmq_y * (WARP_SIZE_GGUF)       + 4*mmq_y];
     __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE_GGUF/QI4_K) + mmq_y/QI4_K];
     __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE_GGUF/8)     + mmq_y/8];
 
@@ -1240,8 +1240,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const block_q4_K * bx0 = (const block_q4_K *) vx;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
-        int i = i0 + i_offset;
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * 4) {
+        int i = i0 + i_offset * 4 + k/8;
 
         if (need_check) {
             i = min(i, i_max);
@@ -1257,8 +1257,10 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 //             //             i, kbx, packed, x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8],
 //             //             x_ql[i * (2 * WARP_SIZE_GGUF + 1) + 16*(k/8) + k%8 + 8]);
 // #else
-        x_ql[i * (WARP_SIZE_GGUF + 1) + k] = get_int_from_uint8_aligned(bxi->qs, kqsx);
-// #endif // FAST_MMA
+        reinterpret_cast<int4*>(&x_ql[i * (WARP_SIZE_GGUF + 4)])[k%8]
+            = reinterpret_cast<const int4*>(bxi->qs)[k%8];
+            // = get_int_from_uint8_aligned(bxi->qs, kqsx);
+// #endif // FAST_MMA[
 
     }
 

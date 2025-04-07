@@ -10,7 +10,7 @@ from huggingface_hub import snapshot_download
 import vllm._custom_ops as ops
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.fused_moe import fused_experts
-from vllm.model_executor.layers.quantization.gguf import _fused_moe_gguf, _fused_moe_gguf_new
+from vllm.model_executor.layers.quantization.gguf import _fused_moe_gguf, _fused_moe_gguf_new, _fused_moe_gguf_new2
 from vllm.platforms import current_platform
 from torch.utils.cpp_extension import load
 import os
@@ -75,6 +75,11 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
                              torch.tensor(w2.data,
                                           device="cuda"), topk_weights,
                              topk_ids, quant_type, quant_type, act, my_extension)
+
+    output_fast2 = _fused_moe_gguf_new2(x, w,
+                             torch.tensor(w2.data,
+                                          device="cuda"), topk_weights,
+                             topk_ids, quant_type, quant_type, act, my_extension)
     torch.cuda.synchronize()
 
     print(output.shape)
@@ -85,6 +90,7 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
     # torch.testing.assert_close(output, ref_output, atol=1, rtol=1e-1)
     print(output)
     print(output_fast)
+    print(output_fast2)
 
     # if(num_tokens >= 8):
     #     print(output[56, :22])
