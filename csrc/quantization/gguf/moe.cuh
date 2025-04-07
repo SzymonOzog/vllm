@@ -235,12 +235,12 @@ static __device__ __forceinline__ void moe_q(
                   sum[i] += (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[k00][i/2].x;
                   sum[i] += (float)dsy[i%2].y * (float)dsx[k00][i/2].y;
               }
-              // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
-              // {
-              //     int i = 0;
-              //     printf("loaded mma A %d/%d, k %d, sum %f, acc %f, a %010x b %010x\n", row, col, k, sum[i], (float)acc.x[i],
-              //             A.x[0], B.x[0]);
-              // }
+                 // if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+                 // {
+                 //     int i = 0;
+                 //     printf("loaded og mma A %d/%d, k %d, sum %f, acc %f, a %010x b %010x (%d, %d), scales %f, %f\n", row, col, k, sum[i], (float)acc.x[i],
+                 //             A.x[0], B.x[0], row, col, (float)dsx[k00][0].x, (float)dsx[k00][0].y);
+                 // }
           }
           // if(threadIdx.x == 0 && threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 0)
           //     printf("\n\n");

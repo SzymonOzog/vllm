@@ -102,7 +102,7 @@ static __global__ void extract(void* __restrict__ x, int* qs, half2* dms, int n_
     // }
 
     const int4* vals = (const int4*) blk->qs;
-    for(int i = dm_idx; i < IPB/4; i++)
+    for(int i = 0; i < IPB/4; i++)
     {
         reinterpret_cast<int4*>(qs + block_idx * QI4_K)[i] = vals[i];
     }
@@ -426,11 +426,11 @@ torch::Tensor ggml_moe_a8_new(torch::Tensor X,  // input
   at::Tensor quant_X = torch::empty({tokens, padded / 32 * 9}, options);
 
   at::Tensor qs_W = torch::empty({W.sizes()[0], row, (col/QK_K) * QI4_K}, options);
-  at::Tensor ds_W = torch::empty({W.sizes()[0], row, (col/QK_K) * 8}, options);
+  at::Tensor ds_W = torch::empty({W.sizes()[0], row, (col/QK_K) * 16}, options);
 
   int num_blocks =  W.sizes()[0] * row * (col/QK_K);
 
-  extract<<<std::ceil((float)(num_blocks*2)/32), 32>>>
+  extract<<<std::ceil((float)(num_blocks)/32), 32>>>
       ((void*)W.data_ptr(), (int*)qs_W.data_ptr(), (half2*)ds_W.data_ptr(),num_blocks);
   // std::cout<<ds_W<<std::endl;
   // return Y;

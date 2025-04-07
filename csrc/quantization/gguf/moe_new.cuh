@@ -11,8 +11,8 @@ static __device__ __forceinline__ half2 unpack_scales(const int4& scales, const 
     int sc32 = unpack_scales_q45_K(sc, k_idx);
     int m32 = unpack_scales_q45_K(sc, k_idx+2);
     return ds * make_half2(
-            reinterpret_cast<const int8_t*>(sc32)[s_idx],
-            reinterpret_cast<const int8_t*>(m32)[s_idx]
+            reinterpret_cast<const int8_t*>(&sc32)[s_idx],
+            reinterpret_cast<const int8_t*>(&m32)[s_idx]
             );
 }
 
@@ -80,16 +80,16 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                      reinterpret_cast<int4 *>(&tile_x_ql[(i-row_x_0) * (WARP_SIZE_GGUF + 4)])[threadIdx.x % 8] = 
                          reinterpret_cast<const int4*>(qs)[threadIdx.x%8];
                  }
-                 for (int i0 = 0; i0 < mmq_y; i0 += nwarps * 32) {
+                 for (int i0 = threadIdx.y*blockDim.x + threadIdx.x; i0 < mmq_y; i0 += nwarps * 32) {
                      int i = row_x_0 + i0;// + threadIdx.y * 4 + threadIdx.x/8;
                      // int off = threadIdx.x % 8;
                      if (need_check) {
                          i = min(i, nrows_x - 1);
                      }
                      const int4* ds = x_ds + i * blocks_per_row_x + ib0;
-                     // if(threadIdx.x == 1 && threadIdx.y == 0 && blockIdx.x == 0 && (col_dst.x == 0 || col_dst.y==0))
-                     //     printf("loading scales from %d, %d, to %d, %d, %f, %f, ptr %p\n", i, ib0*8, (i-row_x_0), off, (float)ds[off].x, (float)ds[off].y, ds);
-                     tile_x_dm[i] = ds[0];
+                     // if(blockIdx.x == 0 && blockIdx.y == 0)
+                     //     printf("loading scales from %d, %d, to %d, %d, ptr %p\n", i, ib0, i0, 0, ds);
+                     tile_x_dm[i0] = ds[0];
                      // tile_x_dm[(i-row_x_0)*9 + off] = ds[off];
                  }
                  __syncthreads();
@@ -126,16 +126,16 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                      for (int i = 0; i < mmq_x; i += nwarps) {
                          const int col_y_eff = token_offs[i / nwarps] / top_k;
                          const int block_x = ib0 * (qk / QK8_1) + kbxd;
-                 // if(blockIdx.x == 0 && blockIdx.y == 22)
-                 // {
-                 //     printf("loading val to %d, %d from %d, %d, sv = %d, %d\n", (threadIdx.y + i), kqs%WARP_SIZE_GGUF, col_y_eff, threadIdx.x%QI8_1, col_dst.x, col_dst.y);
-                 // }
                          if (col_y_eff < ncols_y && block_x < blocks_per_col_y) {
                              const block_q8_1* by0 = &y[col_y_eff * blocks_per_col_y + block_x];
                              const int index_y =
                                  (threadIdx.y + i) * WARP_SIZE_GGUF + kqs % WARP_SIZE_GGUF;
                              tile_y_qs[index_y] =
                                  get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
+                         // if(blockIdx.x == 0 && blockIdx.y == 0)
+                         // {
+                         //     printf("loading val %010x to %d, %d from %d, %d, sv = %d, %d\n", tile_y_qs[index_y], (threadIdx.y + i), kqs%WARP_SIZE_GGUF, col_y_eff, threadIdx.x%QI8_1, col_dst.x, col_dst.y);
+                         // }
                          }
                      }
 
@@ -187,13 +187,13 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                          }
                      }
                      __syncthreads();
-                 // if(threadIdx.x ==0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 22)
+                 // if(threadIdx.x ==0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
                  //     {
                  //         printf("-----Y, %d, %d-------\n", threadIdx.x, threadIdx.y);
-                 //         for (int t = 0; t<mmq_x * WARP_SIZE_GGUF / QI8_1; t++)
+                 //         for (int t = 0; t<mmq_x * WARP_SIZE_GGUF; t++)
                  //         {
-                 //             printf("%f/%f, ",(float)tile_y_ds[t].x, (float)tile_y_ds[t].y);
-                 //             if((t+1)%(WARP_SIZE_GGUF / QI8_1) == 0)
+                 //             printf("%010x, ", tile_y_qs[t]);
+                 //             if((t+1)%(WARP_SIZE_GGUF) == 0)
                  //                 printf("\n");
                  //         }
                  //         printf("------Y------\n");
@@ -267,12 +267,12 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                                  sum[i] += (float)acc.x[i] * (float)dsy[i%2].x * (float)dsx[k00][i/2].x;
                                  sum[i] += (float)dsy[i%2].y * (float)dsx[k00][i/2].y;
                              }
-                 // if(threadIdx.y == 1 && blockIdx.x == 0 && blockIdx.y == 22)
-                 //             {
-                 //                 int i = 0;
-                 //                 printf("loaded mma A %d/%d, k %d, sum %f, acc %f, a %010x b %010x\n", row, col, k, sum[i], (float)acc.x[i],
-                 //                         A.x[0], B.x[0]);
-                 //             }
+                             // if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+                             // {
+                             //     int i = 0;
+                             //     printf("loaded mma A %d/%d, k %d, sum %f, acc %f, a %010x b %010x (%d, %d), scales %f, %f\n", row, col, k, sum[i], (float)acc.x[i],
+                             //             A.x[0], B.x[0], row, col, (float)dsx[k00][0].x, (float)dsx[k00][0].y);
+                             // }
                          }
                      }
 
