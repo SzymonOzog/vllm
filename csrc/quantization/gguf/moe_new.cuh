@@ -45,10 +45,10 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
              const auto col_dst_0 = blockIdx.y * mmq_x;
              const int2 col_dst = reinterpret_cast<const int2*>(&sorted_token_ids[col_dst_0])[lane_id%4];
 
-             int token_offs[mmq_x / nwarps];
-             for (int i = 0; i < mmq_x; i += nwarps) {
-                 token_offs[i / nwarps] = sorted_token_ids[col_dst_0 + threadIdx.y + i];
-             }
+             // int token_offs[mmq_x / nwarps];
+             // for (int i = 0; i < mmq_x; i += nwarps) {
+             //     token_offs[i / nwarps] = sorted_token_ids[col_dst_0 + threadIdx.y + i];
+             // }
 
              const int exp_idx = expert_ids[blockIdx.y];
              if (exp_idx > 255 || exp_idx < 0) return;
@@ -121,17 +121,22 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                  for (int ir = 0; ir < qr && ib0 * qk + ir * n_per_r < ncols_x; ++ir) {
                      const auto kqs = ir * WARP_SIZE_GGUF + threadIdx.x;
                      const int kbxd = kqs / QI8_1;
+                     const auto r0 = ir*WARP_SIZE_GGUF;
+                     const auto c0 = threadIdx.y * 4 + threadIdx.x/8;
+                     // const auto r = ir*WARP_SIZE_GGUF + threadIdx.x;
 
 #pragma unroll
-                     for (int i = 0; i < mmq_x; i += nwarps) {
-                         const int col_y_eff = token_offs[i / nwarps] / top_k;
-                         const int block_x = ib0 * (qk / QK8_1) + kbxd;
+                     for (int i = 0; i < mmq_x; i += nwarps*4) {
+                         // const int col_y_eff = token_offs[i / nwarps] / top_k;
+                         const int col_y_eff = sorted_token_ids[col_dst_0 + c0];
+                         const int block_x = ib0 * (qk / QK8_1) + r0 + threadIdx.x/(QK8_1/4);
                          if (col_y_eff < ncols_y && block_x < blocks_per_col_y) {
                              const block_q8_1* by0 = &y[col_y_eff * blocks_per_col_y + block_x];
-                             const int index_y =
-                                 (threadIdx.y + i) * WARP_SIZE_GGUF + kqs % WARP_SIZE_GGUF;
-                             tile_y_qs[index_y] =
-                                 get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
+                             // const int index_y =
+                             //     (threadIdx.y + i) * WARP_SIZE_GGUF + kqs % WARP_SIZE_GGUF;
+                             reinterpret_cast<int4*>(&tile_y_qs[c0 * WARP_SIZE_GGUF])[threadIdx.x%(QK8_1/4)] =
+                                 reinterpret_cast<const int4*>(by0->qs)[threadIdx.x%(QK8_1/4)];
+                                 // get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
                          // if(blockIdx.x == 0 && blockIdx.y == 0)
                          // {
                          //     printf("loading val %010x to %d, %d from %d, %d, sv = %d, %d\n", tile_y_qs[index_y], (threadIdx.y + i), kqs%WARP_SIZE_GGUF, col_y_eff, threadIdx.x%QI8_1, col_dst.x, col_dst.y);
@@ -145,10 +150,6 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                              const int col_y_eff = col_dst.x / top_k;
                              const int block_x =
                                  ib0 * (qk / QK8_1) + ir * (WARP_SIZE_GGUF / QI8_1) + kby;
-                 // if(blockIdx.x == 0 && blockIdx.y == 22)
-                 // {
-                 //     printf("%d, %d, loading scale 1 to %d, %d from %d, %d, sv %d %d\n", threadIdx.x, threadIdx.y, ((lane_id%4)*2), kby, col_y_eff, block_x, col_dst.x, col_dst.y);
-                 // }
 
                              if (col_y_eff < ncols_y && block_x < blocks_per_col_y) {
                                  const half2* dsi_src = &y[col_y_eff * blocks_per_col_y + block_x].ds;
@@ -167,10 +168,6 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                              const int col_y_eff = col_dst.y / top_k;
                              const int block_x =
                                  ib0 * (qk / QK8_1) + ir * (WARP_SIZE_GGUF / QI8_1) + kby;
-                 // if(blockIdx.x == 0 && blockIdx.y == 22)
-                 // {
-                 //     printf("%d, %d, loading scale 2 to %d, %d from %d, %d\n", threadIdx.x, threadIdx.y, ((lane_id%4)*2 + 1), kby, col_y_eff, block_x);
-                 // }
 
                              if (col_y_eff < ncols_y && block_x < blocks_per_col_y) {
                                  const half2* dsi_src = &y[col_y_eff * blocks_per_col_y + block_x].ds;
