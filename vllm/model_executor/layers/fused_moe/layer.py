@@ -22,6 +22,7 @@ from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 from vllm.platforms.interface import CpuArchEnum
 from vllm.utils import direct_register_custom_op
+from vllm import _custom_ops as ops
 
 if current_platform.is_cuda_alike():
     from .fused_moe import fused_experts
@@ -419,6 +420,7 @@ class FusedMoE(torch.nn.Module):
         activation: str = "silu",
     ):
         super().__init__()
+        self.loaded_full = False
 
         if params_dtype is None:
             params_dtype = torch.get_default_dtype()
@@ -596,6 +598,9 @@ class FusedMoE(torch.nn.Module):
             assert shard_id == "w3"
             expert_data = expert_data.narrow(shard_dim, shard_size, shard_size)
         expert_data.copy_(loaded_weight)
+        if self.loaded_full:
+            expert_data = ops.ggml_extract(exper_data)
+        self.loaded_full = True
 
     def _load_w2(self,
                  expert_data: torch.Tensor,

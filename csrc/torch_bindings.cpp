@@ -321,6 +321,11 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
 
   ops.def("ggml_moe_get_block_size", &ggml_moe_get_block_size);
 
+  // mmq kernel for GGML.
+  ops.def(
+      "ggml_extract(Tensor W) -> Tensor");
+  ops.impl("ggml_extract", torch::kCUDA, &ggml_extract);
+
 #ifndef USE_ROCM
   // fp8_marlin Optimized Quantized GEMM for FP8 weight-only.
   ops.def(

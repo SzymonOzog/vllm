@@ -160,6 +160,8 @@ torch::Tensor ggml_moe_a8(torch::Tensor X, torch::Tensor W,
                           torch::Tensor num_tokens_post_padded, int64_t type,
                           int64_t row, int64_t top_k, int64_t tokens);
 
+torch::Tensor ggml_extract(torch::Tensor W);
+
 int64_t ggml_moe_get_block_size(int64_t type);
 
 #ifndef USE_ROCM
