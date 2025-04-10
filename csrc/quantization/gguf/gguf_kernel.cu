@@ -71,6 +71,66 @@ static void quantize_row_q8_1_cuda(const scalar_t* x, void* vy, const int kx,
   }
 }
 
+
+// Q8 gemv
+template <typename scalar_t>
+static __global__ void quantize_q8_1_split(const scalar_t* __restrict__ x,
+                                     int* __restrict__ vy_qs,
+                                     half2* __restrict__ vy_ds,
+                                     const int kx,
+                                     const int kx_padded) {
+  const auto ix = blockDim.x * blockIdx.x + threadIdx.x;
+  if (ix >= kx_padded) {
+    return;
+  }
+  const auto iy = blockDim.y * blockIdx.y + threadIdx.y;
+  const int i_padded = iy * kx_padded + ix;
+
+  const int ib = i_padded / QK8_1;   // block index
+  const int iqs = i_padded % QK8_1;  // quant index
+
+  const float xi = ix < kx ? static_cast<float>(x[iy * kx + ix]) : 0.0f;
+  float amax = fabsf(xi);
+  float sum = xi;
+
+#pragma unroll
+  for (int mask = 16; mask > 0; mask >>= 1) {
+    amax = fmaxf(amax, VLLM_SHFL_XOR_SYNC_WIDTH(amax, mask, 32));
+    sum += VLLM_SHFL_XOR_SYNC_WIDTH(sum, mask, 32);
+  }
+
+  const float d = amax / 127;
+  const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
+
+  reinterpret_cast<int8_t *>(vy_qs + ib*QI8_1)[iqs] = q;
+
+  if (iqs > 0) {
+    return;
+  }
+
+  half2 ds = make_half2(__float2half(d), __float2half(sum));
+  vy_ds[ib] = ds;
+}
+
+template <typename scalar_t>
+static void quantize_row_q8_1_split_cuda(const scalar_t* x, int* vy_qs, half2* vy_ds, const int kx,
+                                   const int ky, cudaStream_t stream) {
+  const int64_t kx_padded = (kx + 512 - 1) / 512 * 512;
+  const int block_num_x =
+      (kx_padded + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
+  constexpr int MAX_BLOCK_SIZE = 65535;
+  for (int off = 0; off < ky; off += MAX_BLOCK_SIZE) {
+    const int num_blocks_y = std::min(ky, off + MAX_BLOCK_SIZE) - off;
+    const dim3 num_blocks(block_num_x, num_blocks_y, 1);
+    const dim3 block_size(CUDA_DEQUANTIZE_BLOCK_SIZE, 1, 1);
+    quantize_q8_1_split<<<num_blocks, block_size, 0, stream>>>(
+        &x[off * kx], 
+        (int32_t*)vy_qs + off * (kx_padded / 32 * 8),
+        (half2*)vy_ds + off * (kx_padded / 32),
+        kx, kx_padded);
+  }
+}
+
 static __global__ void extract(void* __restrict__ x, int* qs, half2* dms, int n_blocks)
 {
     constexpr int SPB = 8;
@@ -83,23 +143,6 @@ static __global__ void extract(void* __restrict__ x, int* qs, half2* dms, int n_
 
     const block_q4_K* blk = (const block_q4_K *) x + block_idx; 
     reinterpret_cast<int4*>(dms)[idx] = reinterpret_cast<const int4*>(blk)[0];
-    // const int* scales = (const int*) blk->scales;
-    //
-    // half2 b_dm = blk->dm * make_half2(1.0f, -1.0f);
-    // int sc32 = unpack_scales_q45_K(scales, dm_idx);
-    // int m32 = unpack_scales_q45_K(scales, dm_idx+2);
-
-    // const uint8_t * sc8 = (const uint8_t*) &sc32;
-    // const uint8_t * m8 = (const uint8_t*) &m32;
-
-    // for (int l = 0; l < sizeof(int); ++l)
-    // {
-    //     int off = sizeof(int)*dm_idx + l;
-    //     half2 scale = b_dm * make_half2(sc8[l], m8[l]);
-    //     dms[block_idx * SPB + off] = scale;
-        // printf("threadIdx %d, idx %d, writing %f, %f,to block idx %d, dm_idx %d, off %d, ptr %p\n", 
-        //         threadIdx.x, idx, (float)scale.x, (float)scale.y, block_idx, dm_idx, off, &dms[block_idx * SPB + off]);
-    // }
 
     const int4* vals = (const int4*) blk->qs;
     for(int i = 0; i < IPB/4; i++)
@@ -423,25 +466,33 @@ torch::Tensor ggml_moe_a8_new(torch::Tensor X,  // input
   at::Tensor Y = torch::zeros({tokens * top_k, row}, options);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
   options = torch::TensorOptions().dtype(torch::kInt32).device(W.device());
-  at::Tensor quant_X = torch::empty({tokens, padded / 32 * 9}, options);
+
+  at::Tensor quant_X_qs = torch::empty({tokens, padded / 32 * 8}, options);
+  at::Tensor quant_X_ds = torch::empty({tokens, padded / 32}, options);
 
   at::Tensor qs_W = torch::empty({W.sizes()[0], row, (col/QK_K) * QI4_K}, options);
-  at::Tensor ds_W = torch::empty({W.sizes()[0], row, (col/QK_K) * 16}, options);
+  at::Tensor ds_W = torch::empty({W.sizes()[0], row, (col/QK_K) * 4}, options);
 
   int num_blocks =  W.sizes()[0] * row * (col/QK_K);
 
   extract<<<std::ceil((float)(num_blocks)/32), 32>>>
       ((void*)W.data_ptr(), (int*)qs_W.data_ptr(), (half2*)ds_W.data_ptr(),num_blocks);
-  // std::cout<<ds_W<<std::endl;
   // return Y;
 
   VLLM_DISPATCH_FLOATING_TYPES(X.scalar_type(), "ggml_moe_a8", [&] {
-    quantize_row_q8_1_cuda((scalar_t*)X.data_ptr(), (void*)quant_X.data_ptr(),
-                           col, tokens, stream);
+
+          quantize_row_q8_1_split_cuda((scalar_t*)X.data_ptr(),
+                  (int*)quant_X_qs.data_ptr(),
+                  (half2*)quant_X_ds.data_ptr(),
+                  col, tokens, stream);
+  std::cout<<quant_X_qs<<std::endl;
+  std::cout<<quant_X_ds<<std::endl;
+
     switch (type) {
       case 12:
         ggml_moe_q4_K_q8_1_cuda_new(
-            (void*)quant_X.data_ptr(), 
+            (int*)quant_X_qs.data_ptr(),
+            (half2*)quant_X_ds.data_ptr(),
             (int*)qs_W.data_ptr(),
             (half2*)ds_W.data_ptr(),
             (scalar_t*)Y.data_ptr(), (int*)sorted_token_ids.data_ptr(),

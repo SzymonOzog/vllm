@@ -24,7 +24,8 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
          static __device__ __forceinline__ void moe_q_new(
                  const int* __restrict__ vx_qs, 
                  const half2* __restrict__ vx_ds, 
-                 const void* __restrict__ vy,
+                 const int* __restrict__ vy_qs,
+                 const half2* __restrict__ vy_ds,
                  scalar_t* __restrict__ dst, const int* __restrict__ sorted_token_ids,
                  const int* __restrict__ expert_ids,
                  const int* __restrict__ num_tokens_post_padded, 
@@ -45,22 +46,14 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
              const auto col_dst_0 = blockIdx.y * mmq_x;
              const int2 col_dst = reinterpret_cast<const int2*>(&sorted_token_ids[col_dst_0])[lane_id%4];
 
-             // int token_offs[mmq_x / nwarps];
-             // for (int i = 0; i < mmq_x; i += nwarps) {
-             //     token_offs[i / nwarps] = sorted_token_ids[col_dst_0 + threadIdx.y + i];
-             // }
-
              const int exp_idx = expert_ids[blockIdx.y];
              if (exp_idx > 255 || exp_idx < 0) return;
-             if (blockIdx.y * mmq_x > num_tokens_post_padded[0]) return;
+             if (blockIdx.y * mmq_x >= num_tokens_post_padded[0]) return;
 
              const int* x_qs = (vx_qs + exp_idx * exp_stride_qs);
              const int4* x_ds = reinterpret_cast<const int4*>(vx_ds + exp_idx * exp_stride_ds);
 
-             const block_q8_1* y = (const block_q8_1*)(vy);
-
              __shared__ int   tile_x_ql[(mmq_y * (WARP_SIZE_GGUF)  + 4 * mmq_y)];
-             // __shared__ half2 tile_x_dm[mmq_y * (8) + mmq_y];
              __shared__ int4 tile_x_dm[mmq_y];
 
              __shared__ int tile_y_qs[mmq_x * WARP_SIZE_GGUF];
@@ -82,39 +75,14 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                  }
                  for (int i0 = threadIdx.y*blockDim.x + threadIdx.x; i0 < mmq_y; i0 += nwarps * 32) {
                      int i = row_x_0 + i0;// + threadIdx.y * 4 + threadIdx.x/8;
-                     // int off = threadIdx.x % 8;
                      if (need_check) {
                          i = min(i, nrows_x - 1);
                      }
                      const int4* ds = x_ds + i * blocks_per_row_x + ib0;
-                     // if(blockIdx.x == 0 && blockIdx.y == 0)
-                     //     printf("loading scales from %d, %d, to %d, %d, ptr %p\n", i, ib0, i0, 0, ds);
                      tile_x_dm[i0] = ds[0];
-                     // tile_x_dm[(i-row_x_0)*9 + off] = ds[off];
                  }
-                 __syncthreads();
-                 // if(lane_id/4 == 0 && blockIdx.x == 0 && (col_dst.x == 0 || col_dst.y==0))
-                 // {
-                 //     printf("------------\n");
-                 //     for (int t = 0; t<mmq_y * (WARP_SIZE_GGUF) + 4 * mmq_y; t++)
-                 //     {
-                 //         printf("%#010x, ",tile_x_ql[t]);
-                 //         if((t+1)%(32 + 4) == 0)
-                 //             printf("\n");
-                 //     }
-                 //     printf("------------\n");
-                 // }
-                 // if(lane_id/4 == 0 && blockIdx.x == 0 && (col_dst.x == 0 || col_dst.y==0))
-                 // {
-                 //     printf("------------\n");
-                 //     for (int t = 0; t<mmq_y * (8) + mmq_y; t++)
-                 //     {
-                 //         printf("%f/%f, ",(float)tile_x_dm[t].x, (float)tile_x_dm[t].y);
-                 //         if((t+1)%9 == 0)
-                 //             printf("\n");
-                 //     }
-                 //     printf("------------\n");
-                 // }
+                 // __syncthreads();
+
 
                  const int n_per_r = ((qk * blocks_per_warp) / (qr));
 #pragma unroll
@@ -123,89 +91,74 @@ template <typename scalar_t, int qk, int qr, int qi, bool need_sum,
                      const int kbxd = kqs / QI8_1;
                      const auto r0 = ir*WARP_SIZE_GGUF;
                      const auto c0 = threadIdx.y * 4 + threadIdx.x/8;
+                     const int col_y_eff = sorted_token_ids[col_dst_0 + c0] / top_k;
                      // const auto r = ir*WARP_SIZE_GGUF + threadIdx.x;
 
 #pragma unroll
                      for (int i = 0; i < mmq_x; i += nwarps*4) {
-                         // const int col_y_eff = token_offs[i / nwarps] / top_k;
-                         const int col_y_eff = sorted_token_ids[col_dst_0 + c0];
-                         const int block_x = ib0 * (qk / QK8_1) + r0 + threadIdx.x/(QK8_1/4);
-                         if (col_y_eff < ncols_y && block_x < blocks_per_col_y) {
-                             const block_q8_1* by0 = &y[col_y_eff * blocks_per_col_y + block_x];
-                             // const int index_y =
-                             //     (threadIdx.y + i) * WARP_SIZE_GGUF + kqs % WARP_SIZE_GGUF;
-                             reinterpret_cast<int4*>(&tile_y_qs[c0 * WARP_SIZE_GGUF])[threadIdx.x%(QK8_1/4)] =
-                                 reinterpret_cast<const int4*>(by0->qs)[threadIdx.x%(QK8_1/4)];
-                                 // get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
+                         const int val_x = ib0 * (qk / QK8_1) * QI8_1 + ir*WARP_SIZE_GGUF;
+                         if (col_y_eff < ncols_y && val_x < blocks_per_col_y * QI8_1) {
+                             // const block_q8_1* by0 = &y[col_y_eff * blocks_per_col_y + block_x];
+                             const int* y0 = vy_qs + 
+                                 col_y_eff * blocks_per_col_y * QI8_1
+                                 + val_x; 
+                             int4 val = reinterpret_cast<const int4*>(y0)[threadIdx.x%8];
+                             reinterpret_cast<int4*>(&tile_y_qs[c0 * WARP_SIZE_GGUF])[threadIdx.x%8] =
+                                 val;
+                             // if(blockIdx.x == 0 && blockIdx.y == 0)
+                             // {
+                             //     printf("thread %d, %d, reading %010x,%010x,%010x, %010x from %d, %d to %d, %d + %d, row offset %d\n",
+                             //             threadIdx.x, threadIdx.y, 
+                             //             val.x, val.y, val.z, val.w,
+                             //             c0, threadIdx.x%8, col_y_eff, val_x, threadIdx.x%8, blocks_per_col_y*QI8_1);
+                             // }
+
+                         }
+                         // else{
+                         //     if(blockIdx.x == 0 && blockIdx.y == 0)
+                         //     {
+                         //         printf("thread %d, %d from %d, %d to %d, %d + %d, row offset %d\n",
+                         //                 threadIdx.x, threadIdx.y, 
+                         //                 c0, threadIdx.x%8, col_y_eff, val_x, threadIdx.x%8, blocks_per_col_y*QI8_1);
+                         //     }
+                         // }
+                     }
+                     if (threadIdx.x % 8 < n_per_r/QK8_1) {
+                         const auto scale_col = (ib0 * qr + ir)*(WARP_SIZE_GGUF / QI8_1) + threadIdx.x%8;
+                         tile_y_ds[c0 * WARP_SIZE_GGUF / QI8_1 + threadIdx.x%8] = 
+                             vy_ds[col_y_eff*blocks_per_col_y + scale_col];
                          // if(blockIdx.x == 0 && blockIdx.y == 0)
                          // {
-                         //     printf("loading val %010x to %d, %d from %d, %d, sv = %d, %d\n", tile_y_qs[index_y], (threadIdx.y + i), kqs%WARP_SIZE_GGUF, col_y_eff, threadIdx.x%QI8_1, col_dst.x, col_dst.y);
+                         //     printf("thread %d, %d, reading %f, %f from %d, %d to %d, %d, stride %d\n",
+                         //             threadIdx.x, threadIdx.y, 
+                         //             (float)tile_y_ds[c0 * WARP_SIZE_GGUF / QI8_1 + threadIdx.x%8].x,
+                         //             (float)tile_y_ds[c0 * WARP_SIZE_GGUF / QI8_1 + threadIdx.x%8].y,
+                         //             c0, threadIdx.x%8, col_y_eff, scale_col, blocks_per_col_y);
                          // }
-                         }
                      }
-
-                     if ((lane_id>>2) < n_per_r / QK8_1) {
-                         const auto kby = (lane_id>>2) % (WARP_SIZE_GGUF / QI8_1);
-                         {
-                             const int col_y_eff = col_dst.x / top_k;
-                             const int block_x =
-                                 ib0 * (qk / QK8_1) + ir * (WARP_SIZE_GGUF / QI8_1) + kby;
-
-                             if (col_y_eff < ncols_y && block_x < blocks_per_col_y) {
-                                 const half2* dsi_src = &y[col_y_eff * blocks_per_col_y + block_x].ds;
-                                 half2* dsi_dst =
-                                     &tile_y_ds[(lane_id%4)*2 * (WARP_SIZE_GGUF / QI8_1) + kby];
-
-                                 if (need_sum) {
-                                     *dsi_dst = *dsi_src;
-                                 } else {
-                                     float* dfi_dst = (float*)dsi_dst;
-                                     *dfi_dst = __low2float(*dsi_src);
-                                 }
-                             }
-                         }
-                         {
-                             const int col_y_eff = col_dst.y / top_k;
-                             const int block_x =
-                                 ib0 * (qk / QK8_1) + ir * (WARP_SIZE_GGUF / QI8_1) + kby;
-
-                             if (col_y_eff < ncols_y && block_x < blocks_per_col_y) {
-                                 const half2* dsi_src = &y[col_y_eff * blocks_per_col_y + block_x].ds;
-                                 half2* dsi_dst =
-                                     &tile_y_ds[((lane_id%4)*2 + 1) * (WARP_SIZE_GGUF / QI8_1) + kby];
-
-                                 if (need_sum) {
-                                     *dsi_dst = *dsi_src;
-                                 } else {
-                                     float* dfi_dst = (float*)dsi_dst;
-                                     *dfi_dst = __low2float(*dsi_src);
-                                 }
-                             }
-                         }
-                     }
-                     __syncthreads();
-                 // if(threadIdx.x ==0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
-                 //     {
-                 //         printf("-----Y, %d, %d-------\n", threadIdx.x, threadIdx.y);
-                 //         for (int t = 0; t<mmq_x * WARP_SIZE_GGUF; t++)
-                 //         {
-                 //             printf("%010x, ", tile_y_qs[t]);
-                 //             if((t+1)%(WARP_SIZE_GGUF) == 0)
-                 //                 printf("\n");
-                 //         }
-                 //         printf("------Y------\n");
-                 //     }
-                 // if(threadIdx.x ==0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 22)
-                 //     {
-                 //         printf("-----Y-------\n");
-                 //         for (int t = 0; t<mmq_x * WARP_SIZE_GGUF / QI8_1; t++)
-                 //         {
-                 //             printf("%f/%f, ",(float)tile_y_ds[t].x, (float)tile_y_ds[t].y);
-                 //             if((t+1)%(WARP_SIZE_GGUF / QI8_1) == 0)
-                 //                 printf("\n");
-                 //         }
-                 //         printf("------Y------\n");
-                 //     }
+                     // __syncthreads();
+                     // if(threadIdx.x ==0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+                     // {
+                     //     printf("-----Y, %d, %d-------\n", threadIdx.x, threadIdx.y);
+                     //     for (int t = 0; t<mmq_x * WARP_SIZE_GGUF; t++)
+                     //     {
+                     //         printf("%010x, ", tile_y_qs[t]);
+                     //         if((t+1)%(WARP_SIZE_GGUF) == 0)
+                     //             printf("\n");
+                     //     }
+                     //     printf("------Y------\n");
+                     // }
+                     // if(threadIdx.x ==0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+                     // {
+                     //     printf("-----Y-------\n");
+                     //     for (int t = 0; t<mmq_x * WARP_SIZE_GGUF / QI8_1; t++)
+                     //     {
+                     //         printf("%f/%f, ",(float)tile_y_ds[t].x, (float)tile_y_ds[t].y);
+                     //         if((t+1)%(WARP_SIZE_GGUF / QI8_1) == 0)
+                     //             printf("\n");
+                     //     }
+                     //     printf("------Y------\n");
+                     // }
                      __syncthreads();
                      tile<16, 8, int> A_tiles[2];
                      tile<8, 8, int> B;
@@ -324,7 +277,8 @@ __launch_bounds__(WARP_SIZE_GGUF* NWARPS_Q4_K, 2)
 #endif
     moe_q4_K(const int* __restrict__ vx_qs,
             const half2* __restrict__ vx_ds,
-            const void* __restrict__ vy, 
+            const int* __restrict__ vy_qs, 
+            const half2* __restrict__ vy_ds, 
             scalar_t* __restrict__ dst, const int* sorted_token_ids,
             const int* expert_ids, const int* num_tokens_post_padded,
             const int exp_stride_qs, const int exp_stride_ds, 
@@ -337,13 +291,15 @@ __launch_bounds__(WARP_SIZE_GGUF* NWARPS_Q4_K, 2)
 
         moe_q_new<scalar_t, QK_K, QR4_K, QI4_K, true, block_q4_K, mmq_x, mmq_y, nwarps, need_check,
             VDR_Q4_K_Q8_1_MMQ, vec_dot_q4_K_q8_1_mul_mat>(
-                    vx_qs, vx_ds, vy, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
+                    vx_qs, vx_ds, vy_qs, vy_ds, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
                     exp_stride_qs, exp_stride_ds, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
     }
 
 template <typename scalar_t>
 static void ggml_moe_q4_K_q8_1_cuda_new(
-        const void* inp, const int* w_qs, const half2* w_ds,
+        const int* inp_qs,
+        const half2* inp_ds,
+        const int* w_qs, const half2* w_ds,
         scalar_t* dst, const int* sorted_token_ids,
         const int* expert_ids, const int* num_tokens_post_padded,
         const int exp_stride_qs, const int exp_stride_ds, 
@@ -363,12 +319,12 @@ static void ggml_moe_q4_K_q8_1_cuda_new(
     if (nrows_x % mmq_y == 0) {
         constexpr bool need_check = false;
         moe_q4_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-                w_qs, w_ds, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
+                w_qs, w_ds, inp_qs, inp_ds, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
                 exp_stride_qs, exp_stride_ds, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
     } else {
         constexpr bool need_check = true;
         moe_q4_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-                w_qs, w_ds, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
+                w_qs, w_ds, inp_qs, inp_ds, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
                 exp_stride_qs, exp_stride_ds, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
     }
 }
