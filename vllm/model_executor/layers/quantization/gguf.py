@@ -185,6 +185,62 @@ def _fused_moe_gguf(
             out_hidden_states[tok] = current_hidden_state
     return out_hidden_states
 
+def _fused_moe_gguf_new(
+    x: torch.Tensor,
+    w1: torch.Tensor,
+    w2: torch.Tensor,
+    topk_weights: torch.Tensor,
+    topk_ids: torch.Tensor,
+    qweight_type: int,
+    qweight_type2: int,
+    act,
+    ext,
+) -> torch.Tensor:
+    # lazy import to avoid triggering triton import in CPU backend
+    from vllm.model_executor.layers.fused_moe.fused_moe import (
+        moe_align_block_size)
+
+    out_hidden_states = torch.empty_like(x)
+    if qweight_type2 in MMQ_QUANT_TYPES and qweight_type in MMQ_QUANT_TYPES:
+        num_tokens, _ = x.shape
+        E, N, _ = w1.shape
+        top_k = topk_ids.shape[1]
+        BLOCK_SIZE = ext.ggml_moe_get_block_size(qweight_type)
+
+        sorted_token_ids, expert_ids, num_tokens_post_padded = \
+                moe_align_block_size(topk_ids, BLOCK_SIZE, E)
+        out = ext.ggml_moe_a8(x, w1, sorted_token_ids, expert_ids,
+                              num_tokens_post_padded, qweight_type, N, top_k,
+                              num_tokens)
+        out = act(out)
+        out = ext.ggml_moe_a8(out, w2, sorted_token_ids, expert_ids,
+                              num_tokens_post_padded, qweight_type2,
+                              w2.shape[1], 1, num_tokens * top_k)
+        out = out.reshape(num_tokens, top_k, w2.shape[1]).mul_(
+            topk_weights.view(num_tokens, top_k, 1))
+        ops.moe_sum(out, out_hidden_states)
+    else:
+        logger.warning_once("There is no support for fast MoE kernel "
+                            "for current quantization method. "
+                            "Falling back to slow implementation. ")
+        for tok, (w, idx) in enumerate(zip(topk_weights, topk_ids)):
+            inp = x[tok].reshape((1, ) + x.shape[1:])
+            current_hidden_state = None
+            for ww, ii in zip(w, idx):
+                expert_up = w1[ii]
+
+                out = _fuse_mul_mat(inp, expert_up, qweight_type)
+                out = act(out)
+
+                expert_down = w2[ii]
+                current_state = _fuse_mul_mat(out, expert_down,
+                                              qweight_type2).mul_(ww)
+                if current_hidden_state is None:
+                    current_hidden_state = current_state
+                else:
+                    current_hidden_state.add_(current_state)
+            out_hidden_states[tok] = current_hidden_state
+    return out_hidden_states
 
 class GGUFLinearMethod(LinearMethodBase):
     """Linear method for GGUF.

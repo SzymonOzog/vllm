@@ -13,6 +13,7 @@
 #include "mmvq.cuh"
 #include "mmq.cuh"
 #include "moe.cuh"
+#include "moe_new.cuh"
 
 // Q8 gemv
 template <typename scalar_t>
@@ -68,6 +69,104 @@ static void quantize_row_q8_1_cuda(const scalar_t* x, void* vy, const int kx,
     quantize_q8_1<<<num_blocks, block_size, 0, stream>>>(
         &x[off * kx], (int32_t*)vy + off * (kx_padded / 32 * 9), kx, kx_padded);
   }
+}
+
+
+// Q8 gemv
+template <typename scalar_t>
+static __global__ void quantize_q8_1_split(const scalar_t* __restrict__ x,
+                                     int* __restrict__ vy_qs,
+                                     half2* __restrict__ vy_ds,
+                                     const int kx,
+                                     const int kx_padded) {
+  const auto ix = blockDim.x * blockIdx.x + threadIdx.x;
+  if (ix >= kx_padded) {
+    return;
+  }
+  const auto iy = blockDim.y * blockIdx.y + threadIdx.y;
+  const int i_padded = iy * kx_padded + ix;
+
+  const int ib = i_padded / QK8_1;   // block index
+  const int iqs = i_padded % QK8_1;  // quant index
+
+  const float xi = ix < kx ? static_cast<float>(x[iy * kx + ix]) : 0.0f;
+  float amax = fabsf(xi);
+  float sum = xi;
+
+#pragma unroll
+  for (int mask = 16; mask > 0; mask >>= 1) {
+    amax = fmaxf(amax, VLLM_SHFL_XOR_SYNC_WIDTH(amax, mask, 32));
+    sum += VLLM_SHFL_XOR_SYNC_WIDTH(sum, mask, 32);
+  }
+
+  const float d = amax / 127;
+  const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
+
+  reinterpret_cast<int8_t *>(vy_qs + ib*QI8_1)[iqs] = q;
+
+  if (iqs > 0) {
+    return;
+  }
+
+  half2 ds = make_half2(__float2half(d), __float2half(sum));
+  vy_ds[ib] = ds;
+}
+
+template <typename scalar_t>
+static void quantize_row_q8_1_split_cuda(const scalar_t* x, int* vy_qs, half2* vy_ds, const int kx,
+                                   const int ky, cudaStream_t stream) {
+  const int64_t kx_padded = (kx + 512 - 1) / 512 * 512;
+  const int block_num_x =
+      (kx_padded + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
+  constexpr int MAX_BLOCK_SIZE = 65535;
+  for (int off = 0; off < ky; off += MAX_BLOCK_SIZE) {
+    const int num_blocks_y = std::min(ky, off + MAX_BLOCK_SIZE) - off;
+    const dim3 num_blocks(block_num_x, num_blocks_y, 1);
+    const dim3 block_size(CUDA_DEQUANTIZE_BLOCK_SIZE, 1, 1);
+    quantize_q8_1_split<<<num_blocks, block_size, 0, stream>>>(
+        &x[off * kx], 
+        (int32_t*)vy_qs + off * (kx_padded / 32 * 8),
+        (half2*)vy_ds + off * (kx_padded / 32),
+        kx, kx_padded);
+  }
+}
+
+static __global__ void extract(void* __restrict__ x, int* qs, half2* dms, int n_blocks)
+{
+    constexpr int IPB = QI4_K;
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx/2 >= n_blocks) return;
+
+    const int block_idx = idx;
+    const int dm_idx = idx;
+
+    const block_q4_K* blk = (const block_q4_K *) x + block_idx; 
+    reinterpret_cast<int4*>(dms)[idx] = reinterpret_cast<const int4*>(blk)[0];
+
+    const int4* vals = (const int4*) blk->qs;
+    for(int i = 0; i < IPB/4; i++)
+    {
+        reinterpret_cast<int4*>(qs + block_idx * QI4_K)[i] = vals[i];
+    }
+}
+
+torch::Tensor ggml_extract(torch::Tensor W) {
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(W));
+  auto options =
+      torch::TensorOptions().dtype(torch::kFloat16).device(W.device());
+
+  at::Tensor DW = torch::empty_like(W);
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
+
+  //experts * rows
+  int row = W.sizes()[0] * W.sizes()[1];
+  int col = W.sizes()[2];
+  int n_blocks = (row * col)/sizeof(block_q4_K);
+
+  extract<<<std::ceil((float)(n_blocks)/32), 32>>>
+      ((void*)W.data_ptr(), (int*)DW.data_ptr() + n_blocks*4, (half2*)DW.data_ptr(), n_blocks);
+
+  return DW;
 }
 
 torch::Tensor ggml_dequantize(torch::Tensor W,  // quant weight
@@ -280,6 +379,51 @@ torch::Tensor ggml_moe_a8(torch::Tensor X,  // input
                           torch::Tensor expert_ids,
                           torch::Tensor num_tokens_post_padded, int64_t type,
                           int64_t row, int64_t top_k, int64_t tokens) {
+  //TODO move to second kernel
+  if(type == 12)
+  {
+      int col = X.sizes()[1];
+      int padded = (col + 512 - 1) / 512 * 512;
+      const at::cuda::OptionalCUDAGuard device_guard(device_of(X));
+      auto options = torch::TensorOptions().dtype(X.dtype()).device(W.device());
+      at::Tensor Y = torch::zeros({tokens * top_k, row}, options);
+      cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
+      options = torch::TensorOptions().dtype(torch::kInt32).device(W.device());
+
+      at::Tensor quant_X_qs = torch::empty({tokens, padded / 32 * 8}, options);
+      at::Tensor quant_X_ds = torch::empty({tokens, padded / 32}, options);
+
+      int num_blocks =  W.sizes()[0] * row * (col/QK_K);
+
+
+      int stride_ds = num_blocks/W.sizes()[0] * 4;
+      int stride_qs = (num_blocks/W.sizes()[0]) * QI4_K;
+
+      VLLM_DISPATCH_FLOATING_TYPES(X.scalar_type(), "ggml_moe_a8", [&] {
+
+              quantize_row_q8_1_split_cuda((scalar_t*)X.data_ptr(),
+                      (int*)quant_X_qs.data_ptr(),
+                      (half2*)quant_X_ds.data_ptr(),
+                      col, tokens, stream);
+
+              switch (type) {
+              case 12:
+              ggml_moe_q4_K_q8_1_cuda_new(
+                      (int*)quant_X_qs.data_ptr(),
+                      (half2*)quant_X_ds.data_ptr(),
+                      (int*)W.data_ptr() + num_blocks * 4,
+                      (half2*)W.data_ptr(),
+                      (scalar_t*)Y.data_ptr(), (int*)sorted_token_ids.data_ptr(),
+                      (int*)expert_ids.data_ptr(),
+                      (int*)num_tokens_post_padded.data_ptr(),
+                      stride_qs, stride_ds,
+                      col, row,
+                      tokens, padded, row, top_k, sorted_token_ids.sizes()[0], stream);
+              break;
+              }
+      });
+      return Y;
+  }
   int col = X.sizes()[1];
   int padded = (col + 512 - 1) / 512 * 512;
   const at::cuda::OptionalCUDAGuard device_guard(device_of(X));
@@ -377,6 +521,55 @@ torch::Tensor ggml_moe_a8(torch::Tensor X,  // input
   return Y;
 }
 
+torch::Tensor ggml_moe_a8_new(torch::Tensor X,  // input
+                          torch::Tensor W,  // expert weights
+                          torch::Tensor sorted_token_ids,
+                          torch::Tensor expert_ids,
+                          torch::Tensor num_tokens_post_padded, int64_t type,
+                          int64_t row, int64_t top_k, int64_t tokens) {
+  int col = X.sizes()[1];
+  int padded = (col + 512 - 1) / 512 * 512;
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(X));
+  auto options = torch::TensorOptions().dtype(X.dtype()).device(W.device());
+  at::Tensor Y = torch::zeros({tokens * top_k, row}, options);
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
+  options = torch::TensorOptions().dtype(torch::kInt32).device(W.device());
+
+  at::Tensor quant_X_qs = torch::empty({tokens, padded / 32 * 8}, options);
+  at::Tensor quant_X_ds = torch::empty({tokens, padded / 32}, options);
+
+  int num_blocks =  W.sizes()[0] * row * (col/QK_K);
+
+
+  int stride_ds = num_blocks/W.sizes()[0] * 4;
+  int stride_qs = (num_blocks/W.sizes()[0]) * QI4_K;
+
+  VLLM_DISPATCH_FLOATING_TYPES(X.scalar_type(), "ggml_moe_a8", [&] {
+
+          quantize_row_q8_1_split_cuda((scalar_t*)X.data_ptr(),
+                  (int*)quant_X_qs.data_ptr(),
+                  (half2*)quant_X_ds.data_ptr(),
+                  col, tokens, stream);
+
+    switch (type) {
+      case 12:
+        ggml_moe_q4_K_q8_1_cuda_new(
+            (int*)quant_X_qs.data_ptr(),
+            (half2*)quant_X_ds.data_ptr(),
+            (int*)W.data_ptr() + num_blocks * 4,
+            (half2*)W.data_ptr(),
+            (scalar_t*)Y.data_ptr(), (int*)sorted_token_ids.data_ptr(),
+            (int*)expert_ids.data_ptr(),
+            (int*)num_tokens_post_padded.data_ptr(),
+            stride_qs, stride_ds,
+            col, row,
+            tokens, padded, row, top_k, sorted_token_ids.sizes()[0], stream);
+        break;
+    }
+  });
+  return Y;
+}
+
 int64_t ggml_moe_get_block_size(int64_t type) {
   switch (type) {
     case 2:
@@ -394,7 +587,7 @@ int64_t ggml_moe_get_block_size(int64_t type) {
     case 11:
       return MOE_X_Q3_K;
     case 12:
-      return MOE_X_Q4_K;
+      return MOE_X_Q4_K_NEW;
     case 13:
       return MOE_X_Q5_K;
     case 14:
