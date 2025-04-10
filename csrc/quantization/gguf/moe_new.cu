@@ -353,7 +353,6 @@ void ggml_moe_q4_K_q8_1_cuda_new(
     const int block_num_y = (tokens_post_padded) / mmq_x;
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
-    printf("launching gitd %d,%d|%d,%d\n", block_num_x, block_num_y, WARP_SIZE_GGUF, nwarps);
 
     if (nrows_x % mmq_y == 0) {
         constexpr bool need_check = false;

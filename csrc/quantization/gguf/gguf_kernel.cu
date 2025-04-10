@@ -133,7 +133,6 @@ static void quantize_row_q8_1_split_cuda(const scalar_t* x, int* vy_qs, half2* v
 
 static __global__ void extract(void* __restrict__ x, int* qs, half2* dms, int n_blocks)
 {
-    constexpr int SPB = 8;
     constexpr int IPB = QI4_K;
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx/2 >= n_blocks) return;
@@ -149,6 +148,25 @@ static __global__ void extract(void* __restrict__ x, int* qs, half2* dms, int n_
     {
         reinterpret_cast<int4*>(qs + block_idx * QI4_K)[i] = vals[i];
     }
+}
+
+torch::Tensor ggml_extract(torch::Tensor W) {
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(W));
+  auto options =
+      torch::TensorOptions().dtype(torch::kFloat16).device(W.device());
+
+  at::Tensor DW = torch::empty_like(W);
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
+
+  //experts * rows
+  int row = W.sizes()[0] * W.sizes()[1];
+  int col = W.sizes()[2];
+  int n_blocks = (row * col)/sizeof(block_q4_K);
+
+  extract<<<std::ceil((float)(n_blocks)/32), 32>>>
+      ((void*)W.data_ptr(), (int*)DW.data_ptr() + n_blocks*4, (half2*)DW.data_ptr(), n_blocks);
+
+  return DW;
 }
 
 torch::Tensor ggml_dequantize(torch::Tensor W,  // quant weight
@@ -470,14 +488,11 @@ torch::Tensor ggml_moe_a8_new(torch::Tensor X,  // input
   at::Tensor quant_X_qs = torch::empty({tokens, padded / 32 * 8}, options);
   at::Tensor quant_X_ds = torch::empty({tokens, padded / 32}, options);
 
-  at::Tensor qs_W = torch::empty({W.sizes()[0], row, (col/QK_K) * QI4_K}, options);
-  at::Tensor ds_W = torch::empty({W.sizes()[0], row, (col/QK_K) * 4}, options);
-
   int num_blocks =  W.sizes()[0] * row * (col/QK_K);
 
-  extract<<<std::ceil((float)(num_blocks)/32), 32>>>
-      ((void*)W.data_ptr(), (int*)qs_W.data_ptr(), (half2*)ds_W.data_ptr(),num_blocks);
-  // return Y;
+
+  int stride_ds = num_blocks/W.sizes()[0] * 4;
+  int stride_qs = (num_blocks/W.sizes()[0]) * QI4_K;
 
   VLLM_DISPATCH_FLOATING_TYPES(X.scalar_type(), "ggml_moe_a8", [&] {
 
@@ -485,20 +500,18 @@ torch::Tensor ggml_moe_a8_new(torch::Tensor X,  // input
                   (int*)quant_X_qs.data_ptr(),
                   (half2*)quant_X_ds.data_ptr(),
                   col, tokens, stream);
-  std::cout<<quant_X_qs<<std::endl;
-  std::cout<<quant_X_ds<<std::endl;
 
     switch (type) {
       case 12:
         ggml_moe_q4_K_q8_1_cuda_new(
             (int*)quant_X_qs.data_ptr(),
             (half2*)quant_X_ds.data_ptr(),
-            (int*)qs_W.data_ptr(),
-            (half2*)ds_W.data_ptr(),
+            (int*)W.data_ptr() + num_blocks * 4,
+            (half2*)W.data_ptr(),
             (scalar_t*)Y.data_ptr(), (int*)sorted_token_ids.data_ptr(),
             (int*)expert_ids.data_ptr(),
             (int*)num_tokens_post_padded.data_ptr(),
-            qs_W.stride(0), ds_W.stride(0),
+            stride_qs, stride_ds,
             col, row,
             tokens, padded, row, top_k, sorted_token_ids.sizes()[0], stream);
         break;

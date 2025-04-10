@@ -101,8 +101,8 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
     # image = Image.fromarray(img, mode="L")  # "L" mode for grayscale
     #
     # image.save("boolean_tensor.png")
-
+#
     # torch.testing.assert_close(output, output_fast, atol=1e-2, rtol=1e-1)
 test_moe(1, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
-# test_moe(8, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
-# test_moe(64, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
+test_moe(8, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
+test_moe(64, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)

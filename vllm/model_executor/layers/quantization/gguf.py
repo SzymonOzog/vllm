@@ -155,7 +155,7 @@ def _fused_moe_gguf(
         out = ops.ggml_moe_a8(x, w1, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type, N, top_k,
                               num_tokens)
-        return out
+        # return out
         out = act(out)
         out = ops.ggml_moe_a8(out, w2, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type2,
@@ -216,7 +216,7 @@ def _fused_moe_gguf_new(
         out = ext.ggml_moe_a8(x, w1, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type, N, top_k,
                               num_tokens)
-        return out
+        # return out
         torch.cuda.synchronize()
         print("running second kernel")
         out = act(out)
@@ -276,14 +276,17 @@ def _fused_moe_gguf_new2(
                 moe_align_block_size(topk_ids, BLOCK_SIZE, E)
         print(sorted_token_ids)
         print(expert_ids)
-        out = ext.ggml_moe_a8_new(x, w1, sorted_token_ids, expert_ids,
+        print(w1)
+        fixed = ext.ggml_extract(w1)
+        print(fixed)
+        out = ext.ggml_moe_a8_new(x, fixed, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type, N, top_k,
                               num_tokens)
-        return out
+        # return out
         torch.cuda.synchronize()
         print("running second kernel")
         out = act(out)
-        out = ext.ggml_moe_a8_new(out, w2, sorted_token_ids, expert_ids,
+        out = ext.ggml_moe_a8_new(out, ext.ggml_extract(w2), sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type2,
                               w2.shape[1], 1, num_tokens * top_k)
         out = out.reshape(num_tokens, top_k, w2.shape[1]).mul_(
