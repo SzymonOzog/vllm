@@ -682,7 +682,7 @@ static void ggml_moe_q5_K_q8_1_cuda(
   #define MOE_Y_Q6_K 128
   #define NWARPS_Q6_K 8
 #else
-  #define MOE_X_Q6_K 4
+  #define MOE_X_Q6_K 8
   #define MOE_Y_Q6_K 32
   #define NWARPS_Q6_K 4
 #endif
