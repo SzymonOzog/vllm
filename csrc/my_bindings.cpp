@@ -59,9 +59,26 @@ torch::Tensor ggml_extract_k(torch::Tensor W) {
   return ggml_extract(W);
 }
 
+torch::Tensor ggml_moe_a8_vec(torch::Tensor X,  // input
+                          torch::Tensor W,  // expert weights
+                          torch::Tensor topk_ids,
+                          int64_t top_k,
+                          int64_t type,
+                          int64_t row, int64_t tokens);
+
+torch::Tensor ggml_moe_kenel_vec(torch::Tensor X,  // input
+                          torch::Tensor W,  // expert weights
+                          torch::Tensor topk_ids,
+                          int64_t top_k,
+                          int64_t type,
+                          int64_t row, int64_t tokens) {
+  return ggml_moe_a8_vec(X, W, topk_ids, top_k, type, row, tokens);
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("ggml_moe_a8", &ggml_moe_kenel, "GGML moe kernel");
   m.def("ggml_moe_a8_new", &ggml_moe_kenel_new, "GGML moe kernel");
+  m.def("ggml_moe_a8_vec", &ggml_moe_kenel_vec, "GGML moe kernel");
   m.def("ggml_mul_mat_vec_a8", &ggml_mul_mat_vec_a8_k, "matvedc");
   m.def("ggml_mul_mat_a8", &ggml_mul_mat_a8_k, "matvedc");
   m.def("ggml_moe_get_block_size", &ggml_moe_get_block_size_k, "matvedc");

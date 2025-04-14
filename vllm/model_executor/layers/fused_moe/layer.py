@@ -598,9 +598,6 @@ class FusedMoE(torch.nn.Module):
             assert shard_id == "w3"
             expert_data = expert_data.narrow(shard_dim, shard_size, shard_size)
         expert_data.copy_(loaded_weight)
-        if self.loaded_full:
-            expert_data = ops.ggml_extract(exper_data)
-        self.loaded_full = True
 
     def _load_w2(self,
                  expert_data: torch.Tensor,

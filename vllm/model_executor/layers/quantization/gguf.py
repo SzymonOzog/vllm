@@ -18,8 +18,18 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     VocabParallelEmbedding)
 from vllm.model_executor.utils import set_weight_attrs
+from torch.utils.cpp_extension import load
 
 logger = init_logger(__name__)
+
+sources = ["./csrc/my_bindings.cpp", "./csrc/quantization/gguf/gguf_kernel.cu"]
+ext = load(
+    name="my_extension",
+    sources=sources,
+    extra_cuda_cflags=["-arch=sm_90", "-lineinfo"],  # for CUDA 8.0 arch
+    extra_include_paths=["./csrc"],
+    verbose=True,
+)
 
 
 class GGUFConfig(QuantizationConfig):
@@ -205,17 +215,14 @@ def _fused_moe_gguf_new(
         num_tokens, _ = x.shape
         E, N, _ = w1.shape
         top_k = topk_ids.shape[1]
-        BLOCK_SIZE = ext.ggml_moe_get_block_size(qweight_type)
+        # BLOCK_SIZE = ext.ggml_moe_get_block_size(qweight_type)
 
-        sorted_token_ids, expert_ids, num_tokens_post_padded = \
-                moe_align_block_size(topk_ids, BLOCK_SIZE, E)
-        out = ext.ggml_moe_a8(x, w1, sorted_token_ids, expert_ids,
-                              num_tokens_post_padded, qweight_type, N, top_k,
-                              num_tokens)
+        out = ext.ggml_moe_a8_vec(x, w1, topk_ids, top_k, 
+                                  qweight_type, N, num_tokens)
         out = act(out)
-        out = ext.ggml_moe_a8(out, w2, sorted_token_ids, expert_ids,
-                              num_tokens_post_padded, qweight_type2,
-                              w2.shape[1], 1, num_tokens * top_k)
+
+        out = ext.ggml_moe_a8_vec(out, w2, topk_ids, 1,
+                               qweight_type2, w2.shape[1], num_tokens * top_k)
         out = out.reshape(num_tokens, top_k, w2.shape[1]).mul_(
             topk_weights.view(num_tokens, top_k, 1))
         ops.moe_sum(out, out_hidden_states)
@@ -414,10 +421,10 @@ class GGUFMoEMethod(FusedMoEMethodBase):
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias)
-        return _fused_moe_gguf(x, layer.w13_qweight, layer.w2_qweight,
+        return _fused_moe_gguf_new(x, layer.w13_qweight, layer.w2_qweight,
                                topk_weights, topk_ids,
                                layer.w13_qweight_type.weight_type,
-                               layer.w2_qweight_type.weight_type, self.act)
+                               layer.w2_qweight_type.weight_type, self.act, ext)
 
 
 class GGUFEmbeddingMethod(GGUFLinearMethod):

@@ -465,11 +465,11 @@ if hasattr(torch.ops._C, "ggml_dequantize"):
         batch = X.size(0)
         return torch.empty((batch, row), dtype=X.dtype, device=W.device)
 
-    @register_fake("_C::ggml_extract")
-    def _ggml_extract_fake(
-        W: torch.Tensor,
-    ) -> torch.Tensor:
-        return torch.empty_like(W)
+    # @register_fake("_C::ggml_extract")
+    # def _ggml_extract_fake(
+    #     W: torch.Tensor,
+    # ) -> torch.Tensor:
+    #     return torch.empty_like(W)
 
     @register_fake("_C::ggml_moe_a8")
     def _ggml_moe_a8_fake(
