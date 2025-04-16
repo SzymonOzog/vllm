@@ -106,23 +106,90 @@ static __global__ void moe_vec_q4_s(const void * __restrict__ vx, const scalar_t
 
     for (auto i = 0; i < blocks_per_row; i ++) {
         // half2 dm = x[i]->dm;
-        const int4 scales = reinterpret_cast<const int4*>(&x[i])[0];
+        const int4 scales = reinterpret_cast<const int4*>(x+i)[0];
         const int packed = ((const int*)((x + i)->qs))[threadIdx.x];
 
-        const int q1 = packed & 0x0F0F0F0F;
-        const int q2 = (packed>>4) & 0x0F0F0F0F;
+        int2 quants;
+        quants.x = packed & 0x0F0F0F0F;
+        quants.y = (packed>>4) & 0x0F0F0F0F;
+
+        half2 unpacked_scales[2];
+        unpacked_scales[0] = unpack_scales(scales, (threadIdx.x/8)*2);
+        unpacked_scales[1] = unpack_scales(scales, (threadIdx.x/8)*2 + 1);
 
         //thread 0 gets values 0-8 thread 1 gets 8-16 etc..
         //so we need to register shuffle to get the correct values
         //if we want to utilize 16 bit loats
-        const int4 b_vals = reinterpret_cast<const int4*>(&y_eff[i * qk])[threadIdx.x];
-        const half* harr = reinterpret_cast<const half*>(&b_vals);
+        int4 b_vals = reinterpret_cast<const int4*>(&y_eff[i * qk])[threadIdx.x];
+        int4 shfl;
 
-        half2 dsx = unpack_scales(scales, (threadIdx.x/8)*2);
+        int i_idx =(threadIdx.x/8) * 64 + 4 * (threadIdx.x%8);
 
-        const char* a = reinterpret_cast<const char*>(&q1);
+            // if(row == 0 && blockIdx.z == 0 && i < 1)
+            // {
+            //     printf("thread %d, %d, has vals %f, %f, %f, %f, %f, %f, %f, %f, \n",
+            //             threadIdx.x, i_idx,
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[0],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[1],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[2],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[3],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[4],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[5],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[6],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[7]
+            //             );
+            // }
 
-            // if(row == 0 && blockIdx.z == 0)
+        shfl.x = __shfl_sync(0xFFFFFFFF, b_vals.x, i_idx/8);
+        shfl.y = __shfl_sync(0xFFFFFFFF, b_vals.y, i_idx/8);
+        shfl.z = __shfl_sync(0xFFFFFFFF, b_vals.z, i_idx/8);
+        shfl.w = __shfl_sync(0xFFFFFFFF, b_vals.w, i_idx/8);
+        if(threadIdx.x%2==0)
+        {
+            b_vals.x = shfl.x;
+            b_vals.y = shfl.y;
+        }
+        else
+        {
+            b_vals.x = shfl.z;
+            b_vals.y = shfl.w;
+        }
+        i_idx += 32;
+            // if(row == 0 && blockIdx.z == 0 && i < 1)
+            // {
+            //     printf("thread %d, %d, has vals %f, %f, %f, %f, %f, %f, %f, %f, \n",
+            //             threadIdx.x, i_idx,
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[0],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[1],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[2],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[3],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[4],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[5],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[6],
+            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[7]
+            //             );
+            // }
+        shfl.x = __shfl_sync(0xFFFFFFFF, b_vals.x, i_idx/8);
+        shfl.y = __shfl_sync(0xFFFFFFFF, b_vals.y, i_idx/8);
+        shfl.z = __shfl_sync(0xFFFFFFFF, b_vals.z, i_idx/8);
+        shfl.w = __shfl_sync(0xFFFFFFFF, b_vals.w, i_idx/8);
+        if(threadIdx.x%2==0)
+        {
+            b_vals.z = shfl.w;
+            b_vals.w = shfl.z;
+        }
+        else
+        {
+            b_vals.z = shfl.x;
+            b_vals.w = shfl.y;
+        }
+
+
+
+        const scalar_t* harr = reinterpret_cast<const scalar_t*>(&b_vals);
+        const char* a = reinterpret_cast<const char*>(&quants);
+
+            // if(row == 0 && blockIdx.z == 0 && i < 1)
             // {
             //     printf("thread %d, has vals %f, %f, %f, %f, %f, %f, %f, %f, \n",
             //             threadIdx.x, 
@@ -137,69 +204,73 @@ static __global__ void moe_vec_q4_s(const void * __restrict__ vx, const scalar_t
             //             );
             // }
 
-        for (int j = 0; j<4; j++)
+        for (int j = 0; j<8; j++)
         {
-            int i_idx =(threadIdx.x/8) * 64 + 4 * (threadIdx.x%8) + j;
-            int warp_idx = i_idx / 8;
-            int arr_idx = i_idx % 8;
-                
-            // TODO why the gymnastics needed
-            half arr[8];
-            for (int idx = 0; idx<8; idx++)
-                arr[idx] = __shfl_sync(0xFFFFFFFF, harr[idx], warp_idx);
-
-            const float y_val = (float)(*reinterpret_cast<const scalar_t*>(&arr[arr_idx]));
-
-
-            float dequant = (float)a[j] * (float)dsx.x + (float)dsx.y;
+            half2 dsx = unpacked_scales[i/4];
+            float dequant = a[j] * (float)dsx.x + (float)dsx.y;
+            tmp += dequant * (float)harr[j];
             // if(row == 0 && blockIdx.z == 0 && i < 4)
             // {
             //     int offset = ((const char*)x - (const char*)vx);
-            //     printf("thread %d, doing mul %f * %f, from value at idx %d, warp %d, arr %d, exp %d, offset %d, base %p, curr %p\n", 
-            //             threadIdx.x, y_val, dequant, i_idx, warp_idx, arr_idx, expert, offset, vx, x);
+            //     printf("thread %d, doing mul %f * %f, from value at idx %d, base %p, curr %p\n", 
+            //             threadIdx.x, (float)harr[j], dequant, j, vx, x);
             // }
-            tmp += dequant * y_val;
         }
-
-        dsx = unpack_scales(scales, (threadIdx.x/8)*2 + 1);
-        a = reinterpret_cast<const char*>(&q2);
-
-        for (int j = 0; j<4; j++)
-        {
-            int i_idx = 32 + (threadIdx.x/8) * 64 + 4 * (threadIdx.x%8) + j;
-            int warp_idx = i_idx / 8;
-            int arr_idx = i_idx % 8;
-            // TODO why the gymnastics needed
-            half arr[8];
-            for (int idx = 0; idx<8; idx++)
-                arr[idx] = __shfl_sync(0xFFFFFFFF, harr[idx], warp_idx);
-            const float y_val = (float)(*reinterpret_cast<const scalar_t*>(&arr[arr_idx]));
-
-
-            float dequant = (float)a[j] * (float)dsx.x + (float)dsx.y;
-            // if(row == 0 && blockIdx.z == 0 && i < 4)
-            // {
-            //     int offset = ((const char*)x - (const char*)vx);
-            //     printf("thread %d, doing mul %f * %f, from value at idx %d, warp %d, arr %d, exp %d, offset %d, base %p, curr %p\n", 
-            //             threadIdx.x, y_val, dequant, i_idx, warp_idx, arr_idx, expert, offset, vx, x);
-            // }
-            tmp += dequant * y_val;
-        }
-            // if(row == 0 && blockIdx.z == 0)
-            // {
-            //     printf("end thread %d, has vals %f, %f, %f, %f, %f, %f, %f, %f, \n",
-            //             threadIdx.x, 
-            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[0],
-            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[1],
-            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[2],
-            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[3],
-            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[4],
-            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[5],
-            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[6],
-            //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[7]
-            //             );
-            // }
-
+    //             khhhhhhhhhhhh0$
+    //         // TODO why the gymnastics needed
+    //         half arr[8];
+    //         for (int idx = 0; idx<8; idx++)
+    //             arr[idx] = __shfl_sync(0xFFFFFFFF, harr[idx], warp_idx);
+    //
+    //         const float y_val = (float)(*reinterpret_cast<const scalar_t*>(&arr[arr_idx]));
+    //
+    //
+    //         float dequant = (float)a[j] * (float)dsx.x + (float)dsx.y;
+    //         // if(row == 0 && blockIdx.z == 0 && i < 4)
+    //         // {
+    //         //     int offset = ((const char*)x - (const char*)vx);
+    //         //     printf("thread %d, doing mul %f * %f, from value at idx %d, warp %d, arr %d, exp %d, offset %d, base %p, curr %p\n", 
+    //         //             threadIdx.x, y_val, dequant, i_idx, warp_idx, arr_idx, expert, offset, vx, x);
+    //         // }
+    //         tmp += dequant * y_val;
+    //     }
+    //
+    //     dsx = unpack_scales(scales, (threadIdx.x/8)*2 + 1);
+    //     a = reinterpret_cast<const char*>(&q2);
+    //
+    //     for (int j = 0; j<4; j++)
+    //     {
+    //         // TODO why the gymnastics needed
+    //         half arr[8];
+    //         for (int idx = 0; idx<8; idx++)
+    //             arr[idx] = __shfl_sync(0xFFFFFFFF, harr[idx], warp_idx);
+    //         const float y_val = (float)(*reinterpret_cast<const scalar_t*>(&arr[arr_idx]));
+    //
+    //
+    //         float dequant = (float)a[j] * (float)dsx.x + (float)dsx.y;
+    //         // if(row == 0 && blockIdx.z == 0 && i < 4)
+    //         // {
+    //         //     int offset = ((const char*)x - (const char*)vx);
+    //         //     printf("thread %d, doing mul %f * %f, from value at idx %d, warp %d, arr %d, exp %d, offset %d, base %p, curr %p\n", 
+    //         //             threadIdx.x, y_val, dequant, i_idx, warp_idx, arr_idx, expert, offset, vx, x);
+    //         // }
+    //         tmp += dequant * y_val;
+    //     }
+    //         // if(row == 0 && blockIdx.z == 0)
+    //         // {
+    //         //     printf("end thread %d, has vals %f, %f, %f, %f, %f, %f, %f, %f, \n",
+    //         //             threadIdx.x, 
+    //         //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[0],
+    //         //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[1],
+    //         //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[2],
+    //         //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[3],
+    //         //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[4],
+    //         //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[5],
+    //         //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[6],
+    //         //             (float)reinterpret_cast<const scalar_t*>(&b_vals)[7]
+    //         //             );
+    //         // }
+    //
     }
 
     // sum up partial sums and write back result
