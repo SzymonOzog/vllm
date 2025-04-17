@@ -48,7 +48,7 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
     # x = torch.ones((num_tokens, H), dtype=dtype, device="cuda")
 
     topk_weights = torch.rand(num_tokens, top_k, device="cuda", dtype=dtype)
-    topk_ids = torch.randint(0, E, (num_tokens, top_k), device="cuda")
+    topk_ids = torch.randint(0, E, (num_tokens, top_k), device="cuda", dtype=torch.int32)
 
     tensors = get_gguf_MoE_tensors(hidden_size, quant_type)
 
@@ -70,8 +70,7 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
                                           device="cuda"), topk_weights,
                              topk_ids, quant_type, quant_type, act)
 
-    output_fast = _fused_moe_gguf_new(x, my_extension.ggml_extract(w),
-                             my_extension.ggml_extract(w22), topk_weights,
+    output_fast = _fused_moe_gguf_new(x, w, w22, topk_weights,
                              topk_ids, quant_type, quant_type, act, my_extension)
 
     torch.cuda.synchronize()
