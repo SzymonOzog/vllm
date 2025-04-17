@@ -1172,9 +1172,21 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     // iqs = 8...11 -> bq8_offset = 4, want q4_offset = 64, 68, 72, 76
     // iqs = 12..15 -> bq8_offset = 6, want q4_offset = 96, 100, 104, 108
 
-    const int * q4 = (const int *)(bq4_K->qs + 16 * bq8_offset + 4 * ((iqs/2)%4));
-    v[0] = q4[0];
-    v[1] = q4[4];
+    // const int * q4 = (const int *)(bq4_K->qs + 16 * bq8_offset + 4 * ((iqs/2)%4));
+    const int2 val = reinterpret_cast<const int2*>(bq4_K->qs)[threadIdx.x%16];
+
+
+    // v[0] = q4[0];
+    // v[1] = q4[4];
+
+    // int offset_og = 16 * bq8_offset + 4 * ((iqs/2)%4);
+    // if (blockidx.x == 0 && blockidx.y == 0)
+    // {
+    //     printf("thread %d, accessing %d, bq8_off %d, iqs %d, v0 %d, v1 %d, val %d, %d, shfl %d, %d, from %d, %d, block %p\n"
+    //             , threadidx.x, offset_og, bq8_offset, iqs, q4[0], q4[4], val.x, val.y,
+    //             v[0], v[1], offset, offset + 2, bq4_k
+    //             );
+    // }
 
     const uint16_t * scales = (const uint16_t *)bq4_K->scales;
     uint16_t aux[2];
@@ -1196,8 +1208,24 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
         const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
         u[2*i+0] = q8[0];
         u[2*i+1] = q8[4];
+        if (blockIdx.x == 0 && blockIdx.y == 0)
+        {
+            printf("thread %d, bq8_off %d, iqs %d , block %p\n"
+                    , threadIdx.x, bq8_offset, ((iqs/2)%4), bq8i
+                    );
+        }
     }
 
+    int offset = 16 * bq8_offset + 4 * ((iqs/2)%4);
+    offset /= 8;
+    offset += threadIdx.x/16 * 16;
+    int2 rec;
+    rec.x = __shfl_sync(0xFFFFFFFF, val.x, offset);
+    rec.y = __shfl_sync(0xFFFFFFFF, val.y, offset);
+    v[0] = threadIdx.x%2 == 0 ? rec.x : rec.y;
+    rec.x = __shfl_sync(0xFFFFFFFF, val.x, offset + 2);
+    rec.y = __shfl_sync(0xFFFFFFFF, val.y, offset + 2);
+    v[1] = threadIdx.x%2 == 0 ? rec.x : rec.y;
     return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, bq4_K->dm, d8);
 }
 

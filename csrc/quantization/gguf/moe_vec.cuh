@@ -489,7 +489,7 @@ template<typename scalar_t>
 static void moe_vec_q4_K_q8_1_cuda(const void * vx, const void * vy, scalar_t * dst, 
         const int* topk_ids, const int top_k, const int tokens,
         const int ncols, const int nrows, const int token_stride, cudaStream_t stream) {
-    if(top_k == 1)
+    // if(top_k == 1)
     {
         const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
         const dim3 block_nums(block_num_y, 1, tokens*top_k);
@@ -497,15 +497,15 @@ static void moe_vec_q4_K_q8_1_cuda(const void * vx, const void * vy, scalar_t * 
         moe_vec_q<scalar_t, QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>
             <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
     }
-    else
-    {
-        constexpr int GGML_CUDA_MMV_Y2 = 8;
-        const int block_num_y = (nrows + GGML_CUDA_MMV_Y2 - 1) / GGML_CUDA_MMV_Y2;
-        const dim3 block_nums(block_num_y, 1, tokens*top_k);
-        const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y2, 1);
-        moe_vec_q_up<scalar_t, QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>
-            <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
-    }
+    // else
+    // {
+    //     constexpr int GGML_CUDA_MMV_Y2 = 8;
+    //     const int block_num_y = (nrows + GGML_CUDA_MMV_Y2 - 1) / GGML_CUDA_MMV_Y2;
+    //     const dim3 block_nums(block_num_y, 1, tokens*top_k);
+    //     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y2, 1);
+    //     moe_vec_q_up<scalar_t, QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>
+    //         <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+    // }
     // {
     //     constexpr int GGML_CUDA_MMV_Y2 = 16;
     //     const int block_num_y = (nrows + GGML_CUDA_MMV_Y2 - 1) / GGML_CUDA_MMV_Y2;
