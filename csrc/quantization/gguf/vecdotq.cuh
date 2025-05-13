@@ -1256,6 +1256,29 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
         const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
         u[2*i+0] = q8[0];
         u[2*i+1] = q8[4];
+        // // Calculate offset for coalesced memory access
+        // int q_offset = ((iqs/2)%4);
+        // 
+        // // Use int2 for coalesced loading
+        // const int2* q8_ptr = reinterpret_cast<const int2*>(bq8i->qs) + q_offset/2;
+        // int2 q8_vals = q8_ptr[threadIdx.x%4]; // Load values in a coalesced manner
+        // int2 rec;
+        // 
+        // // Use shuffles to distribute the values within the warp
+        // int shuffle_src = q_offset*2 + iqs%2;
+        // rec.x = __shfl_sync(0xFFFFFFFF, q8_vals.x, shuffle_src);
+        // rec.y = __shfl_sync(0xFFFFFFFF, q8_vals.y, shuffle_src);
+        //
+        // u[2*i+0] = threadIdx.x%2 == 0 ? rec.x : rec.y;
+        // rec.x = __shfl_sync(0xFFFFFFFF, q8_vals.x, shuffle_src + 2);
+        // rec.y = __shfl_sync(0xFFFFFFFF, q8_vals.y, shuffle_src + 2);
+        // u[2*i+1] = threadIdx.x%2 == 0 ? rec.x : rec.y;
+        // 
+        // if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.y == 0) {
+        // const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
+        // printf("thread %d, shuffle src %d accesed %010x, %010x, should access %010x %010x\n", 
+        //     threadIdx.x, shuffle_src, u[2*i], u[2*i+1], q8[0], q8[4]);
+        // }
     }
     // if (blockIdx.x == 0 && blockIdx.y == 0)
     // {
