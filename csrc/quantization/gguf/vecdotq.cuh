@@ -1156,6 +1156,22 @@ static __device__ __forceinline__ float vec_dot_q3_K_q8_1_mul_mat(
     return vec_dot_q3_K_q8_1_impl_mmq(v, &y_qs[index_y], scales, x_dmf[i * (WARP_SIZE_GGUF/QI3_K) + i/QI3_K + kbx], y_df[index_y/QI8_1]);
 }
 
+// Helper to extract the `idx`-th uint16_t from the int4
+static __device__ __forceinline__ uint16_t getScale(int idx, const int4& s4){
+    // component index (which int in int4)
+    const int comp  = idx >> 1;        // 0..3
+                                       // whether we want the high 16 bits of that int
+    const int shift = (idx & 1) ? 16 : 0;
+    // select the right 32-bit chunk
+    int chunk;
+    switch (comp) {
+        case 0: chunk = s4.y; break;
+        case 1: chunk = s4.z; break;
+        case 2: chunk = s4.w; break;
+    }
+    return static_cast<uint16_t>((chunk >> shift) & 0xFFFF);
+}
+
 static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
     const block_q4_K * bq4_K = (const block_q4_K *) vbq;
@@ -1187,19 +1203,51 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     //             v[0], v[1], offset, offset + 2, bq4_k
     //             );
     // }
+    const int4 s4 = *reinterpret_cast<const int4*>(bq4_K);
 
-    const uint16_t * scales = (const uint16_t *)bq4_K->scales;
+    // Compute index
+    const int j = bq8_offset / 2;
     uint16_t aux[2];
-    const int j = bq8_offset/2;
+
     if (j < 2) {
-        aux[0] = scales[j+0] & 0x3f3f;
-        aux[1] = scales[j+2] & 0x3f3f;
+        // mask out only the lower 6 bits of each byte-pair
+        aux[0] = (getScale(j + 0, s4)           ) & 0x3f3f;
+        aux[1] = (getScale(j + 2, s4)           ) & 0x3f3f;
     } else {
-        aux[0] = ((scales[j+2] >> 0) & 0x0f0f) | ((scales[j-2] & 0xc0c0) >> 2);
-        aux[1] = ((scales[j+2] >> 4) & 0x0f0f) | ((scales[j-0] & 0xc0c0) >> 2);
+        // combine nibbles without spilling into local memory
+        aux[0] = ((getScale(j + 2, s4) >> 0) & 0x0f0f)
+               | ((getScale(j - 2, s4)      & 0xc0c0) >> 2);
+        aux[1] = ((getScale(j + 2, s4) >> 4) & 0x0f0f)
+               | ((getScale(j - 0, s4)      & 0xc0c0) >> 2);
     }
+
+    // Finally, reinterpret the two uint16_t as bytes
+    // const uint8_t sc[2] = { static_cast<uint8_t>(aux[0]), static_cast<uint8_t>(aux[1]) };
+    // const uint8_t* m = sc + 2;
+    const half2 dm = reinterpret_cast<const half2*>(&s4)[0];
+
+
+    // const uint16_t * scales = (const uint16_t *)bq4_K->scales;
+    // if (j < 2) {
+    //     aux[2] = scales[j+0] & 0x3f3f;
+    //     aux[3] = scales[j+2] & 0x3f3f;
+    // } else {
+    //     aux[2] = ((scales[j+2] >> 0) & 0x0f0f) | ((scales[j-2] & 0xc0c0) >> 2);
+    //     aux[3] = ((scales[j+2] >> 4) & 0x0f0f) | ((scales[j-0] & 0xc0c0) >> 2);
+    // }
     const uint8_t * sc = (const uint8_t *)aux;
     const uint8_t * m  = sc + 2;
+    // if (blockIdx.x == 0 && blockIdx.y == 0) {
+    //     // printf("thread %d, aux %d, %d, s4 dm %f, %f\n"
+    //     // , threadIdx.x, aux[0], aux[1], (float)(dm.x), (float)(dm.y));
+    //     printf("thread %d aux  1 %010x, %010x, aux 2 %010x, %010x, s4: %010x, %010x, %010x, %010x\n"
+    //     , threadIdx.x, aux[0], aux[1], aux[2], aux[3], s4.x, s4.y, s4.z, s4.w);
+    // }
+    // if (blockIdx.x == 0 && blockIdx.y == 0) {
+    //     // printf("thread %d, aux %d, %d, prev dm %f, %f\n"
+    //     // , threadIdx.x, aux[0], aux[1], (float)(dm.x), (float)(dm.y));
+    //     printf("thread %d aux wtf %010x, %010x\n" , threadIdx.x, aux[0], aux[1]);
+    // }
 
     for (int i = 0; i < QR4_K; ++i) {
         const block_q8_1 * bq8i = bq8_1 + bq8_offset + i;
@@ -1208,13 +1256,13 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
         const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
         u[2*i+0] = q8[0];
         u[2*i+1] = q8[4];
-        if (blockIdx.x == 0 && blockIdx.y == 0)
-        {
-            printf("thread %d, bq8_off %d, iqs %d , block %p\n"
-                    , threadIdx.x, bq8_offset, ((iqs/2)%4), bq8i
-                    );
-        }
     }
+    // if (blockIdx.x == 0 && blockIdx.y == 0)
+    // {
+    //     printf("thread %d, bq8_off %d, iqs %d , block %p\n"
+    //             , threadIdx.x, bq8_offset, ((iqs/2)%4), bq8i
+    //             );
+    // }
 
     int offset = 16 * bq8_offset + 4 * ((iqs/2)%4);
     offset /= 8;
