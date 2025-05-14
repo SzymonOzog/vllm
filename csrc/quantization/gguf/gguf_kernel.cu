@@ -61,7 +61,6 @@ static void quantize_row_q8_1_cuda(const scalar_t* x, void* vy, const int kx,
   const int64_t kx_padded = (kx + 512 - 1) / 512 * 512;
   const int block_num_x =
       (kx_padded + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
-  constexpr int MAX_BLOCK_SIZE = 65535;
   for (int off = 0; off < ky; off += MAX_BLOCK_SIZE) {
     const int num_blocks_y = std::min(ky, off + MAX_BLOCK_SIZE) - off;
     const dim3 num_blocks(block_num_x, num_blocks_y, 1);

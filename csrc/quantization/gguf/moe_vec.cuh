@@ -60,11 +60,16 @@ static void moe_vec_q4_0_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK4_0, QI4_0, block_q4_0, VDR_Q4_0_Q8_1_MMVQ,
-            vec_dot_q4_0_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK4_0, QI4_0, block_q4_0, VDR_Q4_0_Q8_1_MMVQ,
+                vec_dot_q4_0_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -75,11 +80,16 @@ static void moe_vec_q4_1_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK4_0, QI4_1, block_q4_1, VDR_Q4_1_Q8_1_MMVQ,
-            vec_dot_q4_1_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK4_0, QI4_1, block_q4_1, VDR_Q4_1_Q8_1_MMVQ,
+                vec_dot_q4_1_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -90,11 +100,16 @@ static void moe_vec_q5_0_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK5_0, QI5_0, block_q5_0, VDR_Q5_0_Q8_1_MMVQ,
-            vec_dot_q5_0_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK5_0, QI5_0, block_q5_0, VDR_Q5_0_Q8_1_MMVQ,
+                vec_dot_q5_0_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -105,11 +120,16 @@ static void moe_vec_q5_1_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK5_1, QI5_1, block_q5_1, VDR_Q5_1_Q8_1_MMVQ,
-            vec_dot_q5_1_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK5_1, QI5_1, block_q5_1, VDR_Q5_1_Q8_1_MMVQ,
+                vec_dot_q5_1_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -120,11 +140,16 @@ static void moe_vec_q8_0_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK8_0, QI8_0, block_q8_0, VDR_Q8_0_Q8_1_MMVQ,
-            vec_dot_q8_0_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK8_0, QI8_0, block_q8_0, VDR_Q8_0_Q8_1_MMVQ,
+                vec_dot_q8_0_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -135,11 +160,16 @@ static void moe_vec_q2_K_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI2_K, block_q2_K, VDR_Q2_K_Q8_1_MMVQ,
-            vec_dot_q2_K_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI2_K, block_q2_K, VDR_Q2_K_Q8_1_MMVQ,
+                vec_dot_q2_K_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -150,11 +180,16 @@ static void moe_vec_q3_K_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI3_K, block_q3_K, VDR_Q3_K_Q8_1_MMVQ,
-            vec_dot_q3_K_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI3_K, block_q3_K, VDR_Q3_K_Q8_1_MMVQ,
+                vec_dot_q3_K_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -165,11 +200,15 @@ static void moe_vec_q4_K_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ,
-            vec_dot_q4_K_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+    for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+        const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+        const dim3 block_nums(block_num_y, 1, num_blocks_z);
+        const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+        const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+        moe_vec_q<scalar_t, QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>
+            <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+    }
 }
 
 template <typename scalar_t>
@@ -180,11 +219,16 @@ static void moe_vec_q5_K_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI5_K, block_q5_K, VDR_Q5_K_Q8_1_MMVQ,
-            vec_dot_q5_K_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI5_K, block_q5_K, VDR_Q5_K_Q8_1_MMVQ,
+                vec_dot_q5_K_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -195,11 +239,16 @@ static void moe_vec_q6_K_q8_1_cuda(const void* vx, const void* vy,
                                    const int token_stride,
                                    cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI6_K, block_q6_K, VDR_Q6_K_Q8_1_MMVQ,
-            vec_dot_q6_K_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI6_K, block_q6_K, VDR_Q6_K_Q8_1_MMVQ,
+                vec_dot_q6_K_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -210,11 +259,16 @@ static void moe_vec_iq2_xxs_q8_1_cuda(const void* vx, const void* vy,
                                       const int token_stride,
                                       cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI2_XXS, block_iq2_xxs, 1, vec_dot_iq2_xxs_q8_1>
-      <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k,
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI2_XXS, block_iq2_xxs, 1, vec_dot_iq2_xxs_q8_1>
+          <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k,
                                               ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -225,11 +279,16 @@ static void moe_vec_iq2_xs_q8_1_cuda(const void* vx, const void* vy,
                                      const int token_stride,
                                      cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI2_XS, block_iq2_xs, 1, vec_dot_iq2_xs_q8_1>
-      <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k,
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI2_XS, block_iq2_xs, 1, vec_dot_iq2_xs_q8_1>
+          <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k,
                                               ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -240,11 +299,16 @@ static void moe_vec_iq2_s_q8_1_cuda(const void* vx, const void* vy,
                                     const int token_stride,
                                     cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI2_S, block_iq2_s, 1, vec_dot_iq2_s_q8_1>
-      <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k,
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI2_S, block_iq2_s, 1, vec_dot_iq2_s_q8_1>
+          <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k,
                                               ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -255,11 +319,16 @@ static void moe_vec_iq3_xxs_q8_1_cuda(const void* vx, const void* vy,
                                       const int token_stride,
                                       cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI3_XXS, block_iq3_xxs, 1, vec_dot_iq3_xxs_q8_1>
-      <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k,
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI3_XXS, block_iq3_xxs, 1, vec_dot_iq3_xxs_q8_1>
+          <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k,
                                               ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -270,11 +339,16 @@ static void moe_vec_iq1_s_q8_1_cuda(const void* vx, const void* vy,
                                     const int token_stride,
                                     cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI1_S, block_iq1_s, 1, vec_dot_iq1_s_q8_1>
-      <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k,
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI1_S, block_iq1_s, 1, vec_dot_iq1_s_q8_1>
+          <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k,
                                               ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -285,11 +359,16 @@ static void moe_vec_iq1_m_q8_1_cuda(const void* vx, const void* vy,
                                     const int token_stride,
                                     cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI1_M, block_iq1_m, 1, vec_dot_iq1_m_q8_1>
-      <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k,
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI1_M, block_iq1_m, 1, vec_dot_iq1_m_q8_1>
+          <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k,
                                               ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -300,11 +379,16 @@ static void moe_vec_iq4_nl_q8_1_cuda(const void* vx, const void* vy,
                                      const int token_stride,
                                      cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK4_NL, QI4_NL, block_iq4_nl, VDR_Q4_0_Q8_1_MMVQ,
-            vec_dot_iq4_nl_q8_1><<<block_nums, block_dims, 0, stream>>>(
-      vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK4_NL, QI4_NL, block_iq4_nl, VDR_Q4_0_Q8_1_MMVQ,
+                vec_dot_iq4_nl_q8_1><<<block_nums, block_dims, 0, stream>>>(
+          vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -315,11 +399,16 @@ static void moe_vec_iq4_xs_q8_1_cuda(const void* vx, const void* vy,
                                      const int token_stride,
                                      cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI4_XS, block_iq4_xs, 1, vec_dot_iq4_xs_q8_1>
-      <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k,
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI4_XS, block_iq4_xs, 1, vec_dot_iq4_xs_q8_1>
+          <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k,
                                               ncols, nrows, token_stride);
+  }
 }
 
 template <typename scalar_t>
@@ -330,9 +419,14 @@ static void moe_vec_iq3_s_q8_1_cuda(const void* vx, const void* vy,
                                     const int token_stride,
                                     cudaStream_t stream) {
   const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-  const dim3 block_nums(block_num_y, 1, tokens * top_k);
-  const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-  moe_vec_q<scalar_t, QK_K, QI3_XS, block_iq3_s, 1, vec_dot_iq3_s_q8_1>
-      <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k,
+  const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+  for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+      const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+      const dim3 block_nums(block_num_y, 1, num_blocks_z);
+      const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+      const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+      moe_vec_q<scalar_t, QK_K, QI3_XS, block_iq3_s, 1, vec_dot_iq3_s_q8_1>
+          <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k,
                                               ncols, nrows, token_stride);
+  }
 }

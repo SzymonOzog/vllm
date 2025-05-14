@@ -173,19 +173,22 @@ static void ggml_moe_q4_0_q8_1_cuda(
 
   const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
   const int block_num_y = (tokens_post_padded) / mmq_x;
-  const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q4_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q4_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q4_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q4_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
   }
 }
 
@@ -234,19 +237,22 @@ static void ggml_moe_q4_1_q8_1_cuda(
 
   const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
   const int block_num_y = (tokens_post_padded) / mmq_x;
-  const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q4_1<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q4_1<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q4_1<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q4_1<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
   }
 }
 
@@ -295,19 +301,22 @@ static void ggml_moe_q5_0_q8_1_cuda(
 
   const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
   const int block_num_y = (tokens_post_padded) / mmq_x;
-  const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q5_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q5_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q5_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q5_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
   }
 }
 
@@ -356,19 +365,22 @@ static void ggml_moe_q5_1_q8_1_cuda(
 
   const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
   const int block_num_y = (tokens_post_padded) / mmq_x;
-  const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q5_1<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q5_1<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q5_1<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q5_1<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
   }
 }
 
@@ -417,19 +429,22 @@ static void ggml_moe_q8_0_q8_1_cuda(
 
   const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
   const int block_num_y = (tokens_post_padded) / mmq_x;
-  const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q8_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q8_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q8_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q8_0<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
   }
 }
 
@@ -478,19 +493,22 @@ static void ggml_moe_q2_K_q8_1_cuda(
 
   const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
   const int block_num_y = (tokens_post_padded) / mmq_x;
-  const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q2_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q2_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q2_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q2_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
   }
 }
 
@@ -539,19 +557,22 @@ static void ggml_moe_q3_K_q8_1_cuda(
 
   const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
   const int block_num_y = (tokens_post_padded) / mmq_x;
-  const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q3_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q3_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q3_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q3_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
   }
 }
 
@@ -602,18 +623,24 @@ static void ggml_moe_q4_K_q8_1_cuda(
   const int block_num_y = (tokens_post_padded) / mmq_x;
   const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
+ 
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q4_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q4_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  }
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q4_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q4_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
+   }
 }
 
 #if defined(USE_ROCM)
@@ -661,19 +688,22 @@ static void ggml_moe_q5_K_q8_1_cuda(
 
   const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
   const int block_num_y = (tokens_post_padded) / mmq_x;
-  const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q5_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q5_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q5_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q5_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
   }
 }
 
@@ -722,18 +752,21 @@ static void ggml_moe_q6_K_q8_1_cuda(
 
   const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
   const int block_num_y = (tokens_post_padded) / mmq_x;
-  const dim3 block_nums(block_num_x, block_num_y, 1);
   const dim3 block_dims(WARP_SIZE_GGUF, nwarps, 1);
 
-  if (nrows_x % mmq_y == 0) {
-    constexpr bool need_check = false;
-    moe_q6_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
-  } else {
-    constexpr bool need_check = true;
-    moe_q6_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
-        w, inp, dst, sorted_token_ids, expert_ids, num_tokens_post_padded,
-        exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+  for (int off = 0; off < block_num_y; off += MAX_BLOCK_SIZE) {
+      const int num_blocks_y = std::min(block_num_y, off + MAX_BLOCK_SIZE) - off;
+      const dim3 block_nums(block_num_x, num_blocks_y, 1);
+      if (nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        moe_q6_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      } else {
+        constexpr bool need_check = true;
+        moe_q6_K<scalar_t, need_check><<<block_nums, block_dims, 0, stream>>>(
+            w, inp, dst, sorted_token_ids+off*mmq_x, expert_ids+off, num_tokens_post_padded,
+            exp_stride, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, top_k);
+      }
   }
 }
