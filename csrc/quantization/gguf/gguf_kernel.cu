@@ -62,7 +62,7 @@ static void quantize_row_q8_1_cuda(const scalar_t* x, void* vy, const int kx,
   const int64_t kx_padded = (kx + 512 - 1) / 512 * 512;
   const int block_num_x =
       (kx_padded + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
-  constexpr int MAX_BLOCK_SIZE = 65535;
+  // constexpr int MAX_BLOCK_SIZE = 65535;
   for (int off = 0; off < ky; off += MAX_BLOCK_SIZE) {
     const int num_blocks_y = std::min(ky, off + MAX_BLOCK_SIZE) - off;
     const dim3 num_blocks(block_num_x, num_blocks_y, 1);
@@ -119,7 +119,7 @@ static void quantize_row_q8_1_split_cuda(const scalar_t* x, int* vy_qs, half2* v
   const int64_t kx_padded = (kx + 512 - 1) / 512 * 512;
   const int block_num_x =
       (kx_padded + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
-  constexpr int MAX_BLOCK_SIZE = 65535;
+  // constexpr int MAX_BLOCK_SIZE = 65535;
   for (int off = 0; off < ky; off += MAX_BLOCK_SIZE) {
     const int num_blocks_y = std::min(ky, off + MAX_BLOCK_SIZE) - off;
     const dim3 num_blocks(block_num_x, num_blocks_y, 1);
@@ -191,111 +191,113 @@ torch::Tensor ggml_mul_mat_vec_a8(torch::Tensor W,  // quant weight
                                   torch::Tensor X,  // input
                                   int64_t type, int64_t row) {
   int col = X.sizes()[1];
+  int vecs = X.sizes()[0];
   const int padded = (col + 512 - 1) / 512 * 512;
   const at::cuda::OptionalCUDAGuard device_guard(device_of(X));
   auto options = torch::TensorOptions().dtype(X.dtype()).device(W.device());
-  at::Tensor Y = torch::empty({1, row}, options);
+  printf("rinning vecs %d row %d \n", vecs, (int)row);
+  at::Tensor Y = torch::empty({vecs, row}, options);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
   options = torch::TensorOptions().dtype(torch::kInt32).device(W.device());
-  at::Tensor quant_X = torch::empty({1, padded / 32 * 9}, options);
+  at::Tensor quant_X = torch::empty({vecs, padded / 32 * 9}, options);
   VLLM_DISPATCH_FLOATING_TYPES(X.scalar_type(), "ggml_mul_mat_vec_a8", [&] {
     quantize_row_q8_1_cuda<scalar_t>((scalar_t*)X.data_ptr(),
-                                     (void*)quant_X.data_ptr(), col, 1, stream);
+                                     (void*)quant_X.data_ptr(), col, vecs, stream);
     switch (type) {
       case 2:
         mul_mat_vec_q4_0_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 3:
         mul_mat_vec_q4_1_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 6:
         mul_mat_vec_q5_0_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 7:
         mul_mat_vec_q5_1_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 8:
         mul_mat_vec_q8_0_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 10:
         mul_mat_vec_q2_K_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 11:
         mul_mat_vec_q3_K_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 12:
         mul_mat_vec_q4_K_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 13:
         mul_mat_vec_q5_K_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 14:
         mul_mat_vec_q6_K_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 16:
         mul_mat_vec_iq2_xxs_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 17:
         mul_mat_vec_iq2_xs_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 18:
         mul_mat_vec_iq3_xxs_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 19:
         mul_mat_vec_iq1_s_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 20:
         mul_mat_vec_iq4_nl_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 21:
         mul_mat_vec_iq3_s_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 22:
         mul_mat_vec_iq2_s_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 23:
         mul_mat_vec_iq4_xs_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
       case 29:
         mul_mat_vec_iq1_m_q8_1_cuda<scalar_t>(
             (void*)W.data_ptr(), (void*)quant_X.data_ptr(),
-            (scalar_t*)Y.data_ptr(), col, row, stream);
+            (scalar_t*)Y.data_ptr(), col, row, vecs, stream);
         break;
     }
   });
@@ -381,50 +383,50 @@ torch::Tensor ggml_moe_a8(torch::Tensor X,  // input
                           torch::Tensor num_tokens_post_padded, int64_t type,
                           int64_t row, int64_t top_k, int64_t tokens) {
   //TODO move to second kernel
-  if(type == 12)
-  {
-      int col = X.sizes()[1];
-      int padded = (col + 512 - 1) / 512 * 512;
-      const at::cuda::OptionalCUDAGuard device_guard(device_of(X));
-      auto options = torch::TensorOptions().dtype(X.dtype()).device(W.device());
-      at::Tensor Y = torch::zeros({tokens * top_k, row}, options);
-      cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
-      options = torch::TensorOptions().dtype(torch::kInt32).device(W.device());
-
-      at::Tensor quant_X_qs = torch::empty({tokens, padded / 32 * 8}, options);
-      at::Tensor quant_X_ds = torch::empty({tokens, padded / 32}, options);
-
-      int num_blocks =  W.sizes()[0] * row * (col/QK_K);
-
-
-      int stride_ds = num_blocks/W.sizes()[0] * 4;
-      int stride_qs = (num_blocks/W.sizes()[0]) * QI4_K;
-
-      VLLM_DISPATCH_FLOATING_TYPES(X.scalar_type(), "ggml_moe_a8", [&] {
-
-              quantize_row_q8_1_split_cuda((scalar_t*)X.data_ptr(),
-                      (int*)quant_X_qs.data_ptr(),
-                      (half2*)quant_X_ds.data_ptr(),
-                      col, tokens, stream);
-
-              switch (type) {
-              case 12:
-              ggml_moe_q4_K_q8_1_cuda_new(
-                      (int*)quant_X_qs.data_ptr(),
-                      (half2*)quant_X_ds.data_ptr(),
-                      (int*)W.data_ptr() + num_blocks * 4,
-                      (half2*)W.data_ptr(),
-                      (scalar_t*)Y.data_ptr(), (int*)sorted_token_ids.data_ptr(),
-                      (int*)expert_ids.data_ptr(),
-                      (int*)num_tokens_post_padded.data_ptr(),
-                      stride_qs, stride_ds,
-                      col, row,
-                      tokens, padded, row, top_k, sorted_token_ids.sizes()[0], stream);
-              break;
-              }
-      });
-      return Y;
-  }
+  // if(type == 12)
+  // {
+  //     int col = X.sizes()[1];
+  //     int padded = (col + 512 - 1) / 512 * 512;
+  //     const at::cuda::OptionalCUDAGuard device_guard(device_of(X));
+  //     auto options = torch::TensorOptions().dtype(X.dtype()).device(W.device());
+  //     at::Tensor Y = torch::zeros({tokens * top_k, row}, options);
+  //     cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
+  //     options = torch::TensorOptions().dtype(torch::kInt32).device(W.device());
+  //
+  //     at::Tensor quant_X_qs = torch::empty({tokens, padded / 32 * 8}, options);
+  //     at::Tensor quant_X_ds = torch::empty({tokens, padded / 32}, options);
+  //
+  //     int num_blocks =  W.sizes()[0] * row * (col/QK_K);
+  //
+  //
+  //     int stride_ds = num_blocks/W.sizes()[0] * 4;
+  //     int stride_qs = (num_blocks/W.sizes()[0]) * QI4_K;
+  //
+  //     VLLM_DISPATCH_FLOATING_TYPES(X.scalar_type(), "ggml_moe_a8", [&] {
+  //
+  //             quantize_row_q8_1_split_cuda((scalar_t*)X.data_ptr(),
+  //                     (int*)quant_X_qs.data_ptr(),
+  //                     (half2*)quant_X_ds.data_ptr(),
+  //                     col, tokens, stream);
+  //
+  //             switch (type) {
+  //             case 12:
+  //             ggml_moe_q4_K_q8_1_cuda_new(
+  //                     (int*)quant_X_qs.data_ptr(),
+  //                     (half2*)quant_X_ds.data_ptr(),
+  //                     (int*)W.data_ptr() + num_blocks * 4,
+  //                     (half2*)W.data_ptr(),
+  //                     (scalar_t*)Y.data_ptr(), (int*)sorted_token_ids.data_ptr(),
+  //                     (int*)expert_ids.data_ptr(),
+  //                     (int*)num_tokens_post_padded.data_ptr(),
+  //                     stride_qs, stride_ds,
+  //                     col, row,
+  //                     tokens, padded, row, top_k, sorted_token_ids.sizes()[0], stream);
+  //             break;
+  //             }
+  //     });
+  //     return Y;
+  // }
   int col = X.sizes()[1];
   int padded = (col + 512 - 1) / 512 * 512;
   const at::cuda::OptionalCUDAGuard device_guard(device_of(X));

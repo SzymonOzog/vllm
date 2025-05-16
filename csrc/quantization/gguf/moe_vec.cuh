@@ -492,10 +492,16 @@ static void moe_vec_q4_K_q8_1_cuda(const void * vx, const void * vy, scalar_t * 
     // if(top_k == 1)
     {
         const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-        const dim3 block_nums(block_num_y, 1, tokens*top_k);
-        const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-        moe_vec_q<scalar_t, QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>
-            <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, topk_ids, top_k, ncols, nrows, token_stride);
+        const int max_block_size_eff = MAX_BLOCK_SIZE - MAX_BLOCK_SIZE%top_k;
+        for (int off = 0; off < tokens*top_k; off += max_block_size_eff) {
+            const int num_blocks_z = std::min(tokens*top_k, off + max_block_size_eff) - off;
+            const dim3 block_nums(block_num_y, 1, num_blocks_z);
+            const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+            printf("running moe vec %d, %d\n", block_num_y, num_blocks_z);
+            const int* y_off = ((const int*)vy) + off*token_stride/top_k;
+            moe_vec_q<scalar_t, QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>
+                <<<block_nums, block_dims, 0, stream>>>(vx, (const void*)y_off, dst + off*nrows, topk_ids + off, top_k, ncols, nrows, token_stride);
+        }
     }
     // else
     // {

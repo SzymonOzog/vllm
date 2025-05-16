@@ -22,14 +22,14 @@ from torch.utils.cpp_extension import load
 
 logger = init_logger(__name__)
 
-sources = ["./csrc/my_bindings.cpp", "./csrc/quantization/gguf/gguf_kernel.cu"]
-ext = load(
-    name="my_extension",
-    sources=sources,
-    extra_cuda_cflags=["-arch=sm_90", "-lineinfo"],  # for CUDA 8.0 arch
-    extra_include_paths=["./csrc"],
-    verbose=True,
-)
+# sources = ["./csrc/my_bindings.cpp", "./csrc/quantization/gguf/gguf_kernel.cu"]
+# ext = load(
+#     name="my_extension",
+#     sources=sources,
+#     extra_cuda_cflags=["-arch=sm_90", "-lineinfo"],  # for CUDA 8.0 arch
+#     extra_include_paths=["./csrc"],
+#     verbose=True,
+# )
 
 
 class GGUFConfig(QuantizationConfig):
@@ -148,8 +148,10 @@ def _fused_moe_gguf(
     qweight_type: int,
     qweight_type2: int,
     act,
+    ext = None
 ) -> torch.Tensor:
     # lazy import to avoid triggering triton import in CPU backend
+    ext = ext or ops
     from vllm.model_executor.layers.fused_moe.fused_moe import (
         moe_align_block_size)
 
@@ -162,11 +164,11 @@ def _fused_moe_gguf(
 
         sorted_token_ids, expert_ids, num_tokens_post_padded = \
                 moe_align_block_size(topk_ids, BLOCK_SIZE, E)
-        out = ops.ggml_moe_a8(x, w1, sorted_token_ids, expert_ids,
+        out = ext.ggml_moe_a8(x, w1, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type, N, top_k,
                               num_tokens)
         out = act(out)
-        out = ops.ggml_moe_a8(out, w2, sorted_token_ids, expert_ids,
+        out = ext.ggml_moe_a8(out, w2, sorted_token_ids, expert_ids,
                               num_tokens_post_padded, qweight_type2,
                               w2.shape[1], 1, num_tokens * top_k)
         out = out.reshape(num_tokens, top_k, w2.shape[1]).mul_(

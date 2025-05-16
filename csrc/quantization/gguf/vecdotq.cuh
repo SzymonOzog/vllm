@@ -1172,6 +1172,26 @@ static __device__ __forceinline__ uint16_t getScale(int idx, const int4& s4){
     return static_cast<uint16_t>((chunk >> shift) & 0xFFFF);
 }
 
+template<typename T, int bytes>
+struct __align__(alignof(T) * bytes/sizeof(T)) loader
+{
+    static constexpr int sz = bytes/sizeof(T);
+    T x[sz];
+    __device__ __forceinline__ T get_value_at(int elem)
+    {
+        T tmp;
+        T ret;
+        const int src_thread = elem/sz;
+        for(int i = 0; i < sz; i++)
+        {
+            tmp = __shfl_sync(0xFFFFFFFF, x[i], src_thread);
+            if (elem%sz == i)
+                ret = tmp;
+        }
+        return ret;
+    }
+};
+
 static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
     const block_q4_K * bq4_K = (const block_q4_K *) vbq;
@@ -1181,7 +1201,7 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     float d8[QR4_K];
 
     // iqs is in 0,2..30. bq8_offset = iqs/4 -> bq8_offset = 0, 2, 4, 6
-    const int bq8_offset = QR4_K * ((iqs/2) / (QI8_1/2));
+    int bq8_offset = QR4_K * ((iqs/2) / (QI8_1/2));
 
     // iqs = 0....3 -> bq8_offset = 0, want q4_offset = 0, 4, 8, 12
     // iqs = 4....7 -> bq8_offset = 2, want q4_offset = 32, 36, 40, 44
@@ -1237,57 +1257,84 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     // }
     const uint8_t * sc = (const uint8_t *)aux;
     const uint8_t * m  = sc + 2;
-    // if (blockIdx.x == 0 && blockIdx.y == 0) {
-    //     // printf("thread %d, aux %d, %d, s4 dm %f, %f\n"
-    //     // , threadIdx.x, aux[0], aux[1], (float)(dm.x), (float)(dm.y));
-    //     printf("thread %d aux  1 %010x, %010x, aux 2 %010x, %010x, s4: %010x, %010x, %010x, %010x\n"
-    //     , threadIdx.x, aux[0], aux[1], aux[2], aux[3], s4.x, s4.y, s4.z, s4.w);
-    // }
-    // if (blockIdx.x == 0 && blockIdx.y == 0) {
-    //     // printf("thread %d, aux %d, %d, prev dm %f, %f\n"
-    //     // , threadIdx.x, aux[0], aux[1], (float)(dm.x), (float)(dm.y));
-    //     printf("thread %d aux wtf %010x, %010x\n" , threadIdx.x, aux[0], aux[1]);
-    // }
 
-    for (int i = 0; i < QR4_K; ++i) {
-        const block_q8_1 * bq8i = bq8_1 + bq8_offset + i;
-        d8[i] = __low2float(bq8i->ds);
-
-        const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
-        u[2*i+0] = q8[0];
-        u[2*i+1] = q8[4];
-        // // Calculate offset for coalesced memory access
-        // int q_offset = ((iqs/2)%4);
-        // 
-        // // Use int2 for coalesced loading
-        // const int2* q8_ptr = reinterpret_cast<const int2*>(bq8i->qs) + q_offset/2;
-        // int2 q8_vals = q8_ptr[threadIdx.x%4]; // Load values in a coalesced manner
-        // int2 rec;
-        // 
-        // // Use shuffles to distribute the values within the warp
-        // int shuffle_src = q_offset*2 + iqs%2;
-        // rec.x = __shfl_sync(0xFFFFFFFF, q8_vals.x, shuffle_src);
-        // rec.y = __shfl_sync(0xFFFFFFFF, q8_vals.y, shuffle_src);
-        //
-        // u[2*i+0] = threadIdx.x%2 == 0 ? rec.x : rec.y;
-        // rec.x = __shfl_sync(0xFFFFFFFF, q8_vals.x, shuffle_src + 2);
-        // rec.y = __shfl_sync(0xFFFFFFFF, q8_vals.y, shuffle_src + 2);
-        // u[2*i+1] = threadIdx.x%2 == 0 ? rec.x : rec.y;
-        // 
-        // if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.y == 0) {
-        // const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
-        // printf("thread %d, shuffle src %d accesed %010x, %010x, should access %010x %010x\n", 
-        //     threadIdx.x, shuffle_src, u[2*i], u[2*i+1], q8[0], q8[4]);
-        // }
+    using L = loader<int, 16>;
+    constexpr int bytes_to_load = sizeof(block_q8_1) * 16;
+    constexpr int vals_to_load = bytes_to_load/sizeof(int);
+    constexpr int vals_per_it = 32*L::sz;
+    constexpr int blk_stride = sizeof(block_q8_1)/sizeof(int);
+    if (threadIdx.x >= 16)
+    {
+        bq8_offset+=8;
+        bq8_1-=8;
     }
-    // if (blockIdx.x == 0 && blockIdx.y == 0)
-    // {
-    //     printf("thread %d, bq8_off %d, iqs %d , block %p\n"
-    //             , threadIdx.x, bq8_offset, ((iqs/2)%4), bq8i
-    //             );
+    L data;
+    half2 src_ds;
+    for (int j = 0; j<64; j+=32)
+    {
+        if((j+threadIdx.x) * 16 < bytes_to_load)
+        {
+            data = reinterpret_cast<const L*>(bq8_1)[j+threadIdx.x];
+        }
+        for (int i = 0; i < QR4_K; ++i) {
+            const int src_blk = bq8_offset + i;
+            const int scale_idx = src_blk*blk_stride;
+            const int val1_idx = 1 + src_blk*blk_stride + ((iqs/2)%4);
+            const int val2_idx = val1_idx + 4;
+            int src_ds_int = data.get_value_at(scale_idx%vals_per_it);
+            int val1 = data.get_value_at(val1_idx%vals_per_it);
+            int val2 = data.get_value_at(val2_idx%vals_per_it);
+            int min_idx = j*L::sz;
+            int max_idx = (j+32)*L::sz;
+            // if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.y == 0 && blockIdx.z == 0) {
+            //     printf("threadIdx %d, doing it %d/%d, scale_idx %d, src_blk %d, val1_idx %d, val2_idx %d, min_idx %d, max_idx %d, vals_per_it %d, ptrj%p\n",
+            //     threadIdx.x, j, i, scale_idx, src_blk, val1_idx, val2_idx, min_idx, max_idx, vals_per_it, bq8_1);
+            // }
+            if(scale_idx >= min_idx && scale_idx<max_idx)
+            {
+                src_ds = *reinterpret_cast<half2*>(&src_ds_int);
+                d8[i] = __low2float(src_ds);
+            }
+            if(val1_idx >= min_idx && val1_idx<max_idx)
+            {
+                u[2*i+0] = val1; 
+            }
+            if(val2_idx >= min_idx && val2_idx<max_idx)
+            {
+                u[2*i+1] = val2; 
+            }
+        }
+    }
+
+    // for (int i = 0; i < QR4_K; ++i) {
+    //     const block_q8_1 * bq8i = bq8_1 + bq8_offset + i;
+
+    //     const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
+    //     // if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.y == 0 && blockIdx.z == 0) {
+    //     if ( u[2*i] !=  q8[0] || u[2*i+1] != q8[4]) {
+        
+    //     half2 true_ds = bq8i->ds;
+    //     // u[2*i] = q8[0];
+    //     // u[2*i+1] = q8[4];
+    //     // d8[i] = __low2float(true_ds);
+    //     // src_ds = d8[i];
+            
+    //     printf("thread %d/%d, off %d, accesed %010x, %010x, should access %010x %010x, ds %f,%f, true %f,%f\n", 
+    //         threadIdx.x, threadIdx.y,  bq8_offset, u[2*i], u[2*i+1], q8[0], q8[4],
+    //         (float)src_ds.x, (float)src_ds.y, (float)true_ds.x, (float)true_ds.y);
+    //     }
+    //     // d8[i] = __low2float(bq8i->ds);
+    //     // if (blockIdx.x == 0 && blockIdx.y == 0)
+    //     // {
+    //     //     printf("thread %d, bq8_off %d, iqs %d , blk %p/%p\n" , threadIdx.x, bq8_offset, ((iqs/2)%4), bq8_1, bq8i);
+    //     // }
+
+    //     // const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
+    //     // u[2*i+0] = q8[0];
+    //     // u[2*i+1] = q8[4];
     // }
 
-    int offset = 16 * bq8_offset + 4 * ((iqs/2)%4);
+    int offset = 16 * (bq8_offset%8) + 4 * ((iqs/2)%4);
     offset /= 8;
     offset += threadIdx.x/16 * 16;
     int2 rec;
