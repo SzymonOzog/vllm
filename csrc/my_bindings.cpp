@@ -75,6 +75,16 @@ torch::Tensor ggml_moe_kenel_vec(torch::Tensor X,  // input
   return ggml_moe_a8_vec(X, W, topk_ids, top_k, type, row, tokens);
 }
 
+torch::Tensor ggml_dequantize(torch::Tensor W, int64_t type, int64_t m,
+                              int64_t n,
+                              std::optional<at::ScalarType> const& dtype);
+
+torch::Tensor ggml_dequantize_k(torch::Tensor W, int64_t type, int64_t m,
+                              int64_t n,
+                              std::optional<at::ScalarType> const& dtype)
+{
+    return ggml_dequantize(W, type, m, n, dtype);
+}
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("ggml_moe_a8", &ggml_moe_kenel, "GGML moe kernel");
   m.def("ggml_moe_a8_new", &ggml_moe_kenel_new, "GGML moe kernel");
@@ -83,4 +93,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("ggml_mul_mat_a8", &ggml_mul_mat_a8_k, "matvedc");
   m.def("ggml_moe_get_block_size", &ggml_moe_get_block_size_k, "matvedc");
   m.def("ggml_extract", &ggml_extract_k, "matvedc");
+  m.def("ggml_dequantize", &ggml_dequantize_k, "matvedc");
 }

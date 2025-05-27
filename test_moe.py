@@ -9,11 +9,12 @@ from huggingface_hub import snapshot_download
 import vllm._custom_ops as ops
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.fused_moe import fused_experts
-from vllm.model_executor.layers.quantization.gguf import _fused_moe_gguf, _fused_moe_gguf_new
+from vllm.model_executor.layers.quantization.gguf import _fused_moe_gguf, _fused_moe_gguf_new, _fuse_mul_mat
 from vllm.platforms import current_platform
 from torch.utils.cpp_extension import load
 from torch.profiler import profile, record_function, ProfilerActivity
 import os
+from triton.testing import do_bench
 torch.utils.cpp_extension.COMMON_NVCC_FLAGS = [
     # '-D__CUDA_NO_HALF_OPERATORS__',
     # '-D__CUDA_NO_HALF_CONVERSIONS__',
@@ -112,6 +113,7 @@ def test_moe(num_tokens: int, hidden_size: int, dtype: torch.dtype,
 #
     # torch.testing.assert_close(output, output_fast, atol=1e-2, rtol=1e-1)
 
+results = {}
 @torch.inference_mode()
 def test_mmq(num_tokens: int, hidden_size: int, dtype: torch.dtype,
              quant_type: GGMLQuantizationType):
@@ -120,28 +122,57 @@ def test_mmq(num_tokens: int, hidden_size: int, dtype: torch.dtype,
     tensors = get_gguf_sample_tensors(hidden_size, quant_type)
     x = torch.rand((num_tokens, hidden_size), dtype=dtype, device="cuda")
     for tensor in tensors:
-
         qweight = torch.tensor(tensor.data, device="cuda")
-        output = my_extension.ggml_mul_mat_a8(qweight, x, quant_type, qweight.shape[0])
+        key = (num_tokens, hidden_size, qweight.shape[0]) 
+        results[key + ("_mat", quant_type)] = do_bench(lambda: _fuse_mul_mat(x, qweight, quant_type, my_extension))
+        results[key + ("_vec", quant_type)] = do_bench(lambda: my_extension.ggml_mul_mat_vec_a8(qweight, x, quant_type, qweight.shape[0]))
+        print(quant_type, key, " resutlts", results[key + ("_mat", quant_type)], results[key + ("_vec", quant_type)])
+        output =_fuse_mul_mat(x, qweight, quant_type, my_extension)
+
         ref_output = my_extension.ggml_mul_mat_vec_a8(qweight, x, quant_type, qweight.shape[0])
         atols = {torch.half: 1, torch.bfloat16: 1.5, torch.float: 1.2}
         # test matrix has inputs centered around 0 and lower precision from
         # bfloat16 tends to accumulate and can greatly inflate rtol
         # since outputs are also very close to 0
         rtols = {torch.half: 1e-1, torch.bfloat16: 1e4, torch.float: 2e1}
-        print(output.shape, ref_output.shape)
         # torch.testing.assert_close(output,
         #                            ref_output,
         #                            atol=atols[dtype],
         #                            rtol=rtols[dtype])
 # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
-#     for n_tokens in range(1,16):
-#         with record_function(f"n_tokens {n_tokens}"):
-#             test_mmq(n_tokens, 1024, torch.bfloat16, GGMLQuantizationType.Q4_K)
+
+QUANT_TYPES = [
+    # i-matrix
+    GGMLQuantizationType.IQ1_M,
+    GGMLQuantizationType.IQ1_S,
+    GGMLQuantizationType.IQ2_S,
+    GGMLQuantizationType.IQ2_XS,
+    GGMLQuantizationType.IQ3_S,
+    GGMLQuantizationType.IQ3_XXS,
+    GGMLQuantizationType.IQ4_NL,
+    GGMLQuantizationType.IQ4_XS,
+    # k-quants
+    GGMLQuantizationType.Q2_K,
+    GGMLQuantizationType.Q3_K,
+    GGMLQuantizationType.Q4_K,
+    GGMLQuantizationType.Q5_K,
+    GGMLQuantizationType.Q6_K,
+    # standard quantization
+    GGMLQuantizationType.Q4_0,
+    GGMLQuantizationType.Q5_0,
+    GGMLQuantizationType.Q8_0,
+]
+for quant_type in QUANT_TYPES:
+    for n_tokens in range(1,16):
+        test_mmq(n_tokens, 1024, torch.bfloat16, quant_type)
+print(results)
 # prof.export_chrome_trace("trace.json")
 
-test_moe(1, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
-test_moe(8, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
+# test_moe(1, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
+# test_moe(8, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
 # test_moe(2048, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
 # # test_moe(8192, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
 # test_moe(16*8192, 512, torch.bfloat16, GGMLQuantizationType.Q4_K, 8)
+test_mmq(1, 1024, torch.bfloat16, GGMLQuantizationType.Q4_K)
+# test_mmq(8, 1024, torch.bfloat16, GGMLQuantizationType.Q4_K)
+# test_mmq(64, 1024, torch.bfloat16, GGMLQuantizationType.Q4_K)

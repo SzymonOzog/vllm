@@ -106,7 +106,7 @@ MMQ_QUANT_TYPES = STANDARD_QUANT_TYPES | KQUANT_TYPES
 
 
 def _fuse_mul_mat(x: torch.Tensor, qweight: torch.Tensor,
-                  qweight_type: int) -> torch.Tensor:
+                  qweight_type: int, ext) -> torch.Tensor:
     # HACK: when doing chunked prefill we don't generate output tokens
     # so input to logits generator is empty which causes invalid parameter
     if x.shape[0] == 0:
@@ -117,17 +117,17 @@ def _fuse_mul_mat(x: torch.Tensor, qweight: torch.Tensor,
     # there is no need to call any kernel for fp16/bf16
     if qweight_type in UNQUANTIZED_TYPES:
         return x @ qweight.T
-    # enable MMVQ in contiguous batching with batch_size=1
-    if x.shape[0] == 1 and qweight_type in MMVQ_QUANT_TYPES:
-        y = ops.ggml_mul_mat_vec_a8(qweight, x, qweight_type, qweight.shape[0])
-    # Use MMQ Kernel if it's available (standard + k-quants)
-    elif qweight_type in MMQ_QUANT_TYPES:
-        y = ops.ggml_mul_mat_a8(qweight, x, qweight_type, qweight.shape[0])
+    # # enable MMVQ in contiguous batching with batch_size=1
+    # if x.shape[0] == 1 and qweight_type in MMVQ_QUANT_TYPES:
+    #     y = ops.ggml_mul_mat_vec_a8(qweight, x, qweight_type, qweight.shape[0])
+    # # Use MMQ Kernel if it's available (standard + k-quants)
+    if qweight_type in MMQ_QUANT_TYPES:
+        y = ext.ggml_mul_mat_a8(qweight, x, qweight_type, qweight.shape[0])
     # If there is no available MMQ kernel, fallback to dequantize
     elif qweight_type in DEQUANT_TYPES:
         block_size, type_size = gguf.GGML_QUANT_SIZES[qweight_type]
         shape = (qweight.shape[0], qweight.shape[1] // type_size * block_size)
-        weight = ops.ggml_dequantize(qweight, qweight_type, *shape, x.dtype)
+        weight = ext.ggml_dequantize(qweight, qweight_type, *shape, x.dtype)
         y = x @ weight.T
     else:
         # Raise an error if the quantization type is not supported.
